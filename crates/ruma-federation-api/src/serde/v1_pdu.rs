@@ -15,7 +15,7 @@ use serde::{
     ser::{Serialize, SerializeSeq, Serializer},
 };
 
-pub fn serialize<T, S>(val: &T, serializer: S) -> Result<S::Ok, S::Error>
+pub(crate) fn serialize<T, S>(val: &T, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
     T: Serialize,
@@ -26,7 +26,7 @@ where
     seq.end()
 }
 
-pub fn deserialize<'de, T, D>(deserializer: D) -> Result<T, D::Error>
+pub(crate) fn deserialize<'de, T, D>(deserializer: D) -> Result<T, D::Error>
 where
     D: Deserializer<'de>,
     T: Deserialize<'de>,
@@ -67,13 +67,13 @@ where
     }
 }
 
-#[cfg(not(feature = "unstable-unspecified"))]
 #[cfg(test)]
 mod tests {
-    use assert_matches::assert_matches;
+    use assert_matches2::assert_matches;
     use serde_json::json;
 
     use super::{deserialize, serialize};
+    #[allow(deprecated)]
     use crate::membership::create_join_event::v1::RoomState;
 
     #[test]
@@ -81,14 +81,13 @@ mod tests {
         let response = json!([
             200,
             {
-                "origin": "example.com",
                 "auth_chain": [],
                 "state": []
             }
         ]);
 
-        let RoomState { origin, auth_chain, state, event } = deserialize(response).unwrap();
-        assert_eq!(origin, "example.com");
+        #[allow(deprecated)]
+        let RoomState { auth_chain, state, event } = deserialize(response).unwrap();
         assert_matches!(auth_chain.as_slice(), []);
         assert_matches!(state.as_slice(), []);
         assert_matches!(event, None);
@@ -96,19 +95,14 @@ mod tests {
 
     #[test]
     fn serialize_response() {
-        let room_state = RoomState {
-            origin: "matrix.org".into(),
-            auth_chain: Vec::new(),
-            state: Vec::new(),
-            event: None,
-        };
+        #[allow(deprecated)]
+        let room_state = RoomState { auth_chain: Vec::new(), state: Vec::new(), event: None };
 
         let serialized = serialize(&room_state, serde_json::value::Serializer).unwrap();
         let expected = json!(
             [
                 200,
                 {
-                    "origin": "matrix.org",
                     "auth_chain": [],
                     "state": []
                 }
@@ -121,6 +115,7 @@ mod tests {
     #[test]
     fn too_short_array() {
         let json = json!([200]);
+        #[allow(deprecated)]
         let failed_room_state = deserialize::<RoomState, _>(json);
         assert_eq!(
             failed_room_state.unwrap_err().to_string(),
@@ -135,6 +130,7 @@ mod tests {
             "auth_chain": [],
             "state": []
         });
+        #[allow(deprecated)]
         let failed_room_state = deserialize::<RoomState, _>(json);
 
         assert_eq!(
@@ -145,9 +141,9 @@ mod tests {
 
     #[test]
     fn too_long_array() {
-        let json = json!([200, { "origin": "", "auth_chain": [], "state": [] }, 200]);
-        let RoomState { origin, auth_chain, state, event } = deserialize(json).unwrap();
-        assert_eq!(origin, "");
+        let json = json!([200, { "auth_chain": [], "state": [] }, 200]);
+        #[allow(deprecated)]
+        let RoomState { auth_chain, state, event } = deserialize(json).unwrap();
         assert_matches!(auth_chain.as_slice(), []);
         assert_matches!(state.as_slice(), []);
         assert_matches!(event, None);

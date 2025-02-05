@@ -2,8 +2,211 @@
 
 Breaking changes:
 
-- Make `in_reply_to` field of `Thread` optional
-  - It was wrong to be mandatory, spec was unclear (clarified [here](https://github.com/matrix-org/matrix-spec/pull/1439))
+- `UserId` parsing and deserialization are now compatible with all non-compliant
+  user IDs in the wild by default, due to a clarification in the spec.
+  - The `compat-user-id` cargo feature was removed.
+  - `UserId::validate_historical()` and `UserId::validate_strict()` allow to
+    check for spec compliance.
+  - The `(owned_)user_id!` macros always validate against the strict grammar in
+    the spec, regardless of the compat features that are enabled.
+- `(owned_)room_id!` macros disallow the `NUL` byte, due to a clarification in
+  the spec.
+- `(owned_)room_alias_id!` macros disallow the `NUL` byte for the localpart, due
+  to a clarification in the spec.
+- `MatrixVersion` does not implement `Display` anymore as it is not correct to
+  convert `V1_0` to a string. Instead `MatrixVersion::as_str()` can be used that
+  only returns `None` for that same variant.
+- `MatrixVersion::(into/from)_parts` are no longer exposed as public methods.
+  They were usually used to sort `MatrixVersion`s, now the `PartialOrd` and
+  `Ord` implementations can be used instead.
+
+Improvements:
+
+- `MatrixVersion` implements `PartialOrd` and `Ord`. The variants are ordered by
+  release date, with a newer version being greater than an older version.
+
+# 0.15.1
+
+Improvements:
+
+- Add `MatrixVersion::V1_13`.
+
+Bug fixes:
+
+- `MatrixVersion::V1_0` now also matches Identity Service API versions r0.2.0 to
+  r0.3.0.
+
+# 0.15.0
+
+Breaking changes:
+
+- `#[serde(flatten)]` on the only body field of a `#[request]` or `#[response]`
+  struct is disallowed. `#[ruma_api(body)]` must be used instead.
+
+Improvements:
+
+- The `ruma_identifiers_storage` compile-time `cfg` setting can also be
+  configured by setting the `RUMA_IDENTIFIERS_STORAGE` environment variable at
+  compile time. It has the benefit of not requiring to re-compile all the crates
+  of the dependency chain when the value is changed.
+- The `unstable-exhaustive-types` cargo feature was replaced by the
+  `ruma_unstable_exhaustive_types` compile-time `cfg` setting. Like all `cfg`
+  settings, it can be enabled at compile-time with the `RUSTFLAGS` environment
+  variable, or inside `.cargo/config.toml`. It can also be enabled by setting
+  the `RUMA_UNSTABLE_EXHAUSTIVE_TYPES` environment variable.
+- `HttpPusherData` allows to set custom data for the pusher in the `data` field,
+  due to a clarification in the spec.
+  - The `default_payload` field that was behind the `unstable-unspecified`
+    cargo feature was removed. It can be added manually to the custom data.
+
+# 0.14.1
+
+Bug fixes:
+
+- The `KeyId::key_name` method now returns the key name. In 0.14.0, `key_name`
+  mistakenly returned the algorithm.
+
+# 0.14.0
+
+Bug fixes:
+
+- The `instance_id` field was removed from `ProtocolInstanceInit` and is now an
+  `Option<String>` for `ProtocolInstance`. It made the `unstable-unspecified`
+  feature non-additive.
+
+Breaking changes:
+
+- Rename the `query_map` attribute of the `request` macro to `query_all`, and
+  remove the required bound to implement `IntoIterator<Item = (String, String)>`.
+  This allows to use a struct or enum as well as a map to represent the list of
+  query parameters. Note that the (de)serialization of the type used must work
+  with `serde_html_form`.
+- The `header` attribute for the `request` and `response` macros accepts any
+  type that implements `ToString` and `FromStr`.
+- The `compat-key-id` cargo feature was renamed to
+  `compat-server-signing-key-version`.
+- `(Owned)KeyName` was renamed to `(Owned)ServerSigningKeyVersion` and is now
+  validated according to the set of allowed characters defined in the docs,
+  unless the `compat-server-signing-key-version` cargo feature is enabled.
+- The bounds on `KeyId` changed. The algorithm part must implement
+  `KeyAlgorithm` and the key name part must implement `KeyName`.
+- The `(owned_)server_signing_key_id` macros were removed. For compile-time
+  validated construction, use `ServerSigningKeyId::from_parts` with a
+  `SigningKeyAlgorithm` and the `server_signing_key_version` macro.
+- Rename `Signatures::insert` to `Signatures::insert_signature`.
+  `Signatures::insert` is now dereferenced to `BTreeMap::insert`.
+- Move the `DeviceKeyAlgorithm::SignedCurve25519` into the new
+  `OneTimeKeyAlgorithm` type.
+- Add `(Owned)CrossSigningKeyId` and use it instead of `OwnedDeviceKeyId` to
+  identify `CrossSigningKey`'s `keys`.
+- Add `(Owned)CrossSigningOrDeviceSigningKeyId` and use it instead of
+  `OwnedDeviceKeyId` to identify signing keys in `DeviceKeys`'s and
+  `CrossSigningKey`'s `signatures`.
+- Use `OwnedDeviceSigningKeyId` instead of `OwnedDeviceKeyId` to identify
+  signing keys in `SignedKey`'s `signatures`.
+- `(Owned)DeviceKeyId` is now a type alias of `(Owned)KeyId`.
+  - Remove the `(owned_)device_key_id` macro, instead use
+    `DeviceKeyId::from_parts`.
+- Use `CrossSigningOrDeviceSignatures` for the `signatures` of `DeviceKeys`.
+- Remove `SignedKeySignatures` and replace it with `DeviceSignatures`.
+- Remove `CrossSigningKeySignatures` and replace it with
+  `CrossSigningOrDeviceSignatures`.
+
+Improvements:
+
+- Add the `InvalidHeaderValue` variant to the `DeserializationError` struct, for
+  cases where we receive a HTTP header with an unexpected value.
+- Implement `Eq`/`Hash`/`PartialEq` for `ThirdPartyIdentifier`, to check whether 
+  a `ThirdPartyIdentifier` has already been added by another user.
+- Add `MatrixVersion::V1_11` and `MatrixVersion::V1_12`.
+- Clarify in the docs of `AuthScheme` that sending an access token via a query
+  parameter is deprecated, according to MSC4126 / Matrix 1.11.
+- Constructing a Matrix URI for an event with a room alias is deprecated,
+  according to MSC4132 / Matrix 1.11
+- Implement `Eq` and `PartialEq` for `Metadata`
+- Allow constructing `api::error::MatrixErrorBody::NotJson` outside of this
+  crate.
+- Improve the API of `Signatures`, by implementing `Deref` and `DerefMut`, as
+  well as `From`, `Extend` and `FromIterator` from a list of
+  `(entity, key_identifier, value)` tuples.
+- Add `(Owned)OneTimeKeyId` and `(Owned)OneTimeKeyName` to identify one-time and
+  fallback keys instead of using `(Owned)DeviceKeyId`.
+- Add `(Owned)Base64PublicKey` and `(Owned)Base64PublicKeyOrDeviceId` to
+  identify cross-signing keys.
+  - Add `(owned_)base_64_public_key` to construct a compile-time validated
+    `(Owned)Base64PublicKey`.
+
+# 0.13.0
+
+Bug fixes:
+
+- Allow to deserialize `Ruleset` with missing fields.
+
+Breaking changes:
+
+- The power levels fields in `PushConditionRoomCtx` are grouped in an optional `power_levels` field.
+  If the field is missing, push rules that depend on it will never match. However, this allows to
+  match the `.m.rule.invite_for_me` push rule because usually the `invite_state` doesn't include
+  `m.room.power_levels`.
+- Add support for endpoints that take an optional authentication
+- Add support for endpoints that require authentication for appservices
+- `deserialize_as_f64_or_string` has been extended to also support parsing integers, and renamed to
+  `deserialize_as_number_or_string` to reflect that.
+- The http crate had a major version bump to version 1.1
+- `IntoHttpError::Header` now contains a `HeaderSerializationError`
+
+Improvements:
+
+- Use the [web-time](https://github.com/daxpedda/web-time) crate to return a
+  `SystemTime` that works under WASM in the
+  `MilliSecondsSinceUnixEpoch::to_system_time()` method.
+- Stabilize support for `.m.rule.suppress_edits` push rule (MSC3958 / Matrix 1.9)
+- Add `MatrixVersion::V1_9` and `V1_10`
+- Point links to the Matrix 1.10 specification
+- Implement `as_str()` and `AsRef<str>` for `push::PredefinedRuleId`
+- Implement `kind()` for `push::Predefined{*}RuleId`
+- Implement `Clone` for `MatrixToUri` and `MatrixUri`
+
+# 0.12.1
+
+Bug fixes:
+
+- Allow to deserialize `(New)ConditionalPushRule` with a missing `conditions` field.
+
+# 0.12.0
+
+Bug fixes:
+
+- Set the predefined server-default `.m.rule.tombstone` push rule as enabled by default, as defined
+  in the spec.
+
+Breaking changes:
+
+- `FlattenedJson::get` returns a `FlattenedJsonValue` instead of a string
+- Remove the `DontNotify` and `Coalesce` variants of `push::Action` according to MSC3987
+  - Old push rules will still deserialize successfully but the `Coalesce` variant will not return
+    `true` for `Action::should_notify()` anymore
+- Removed the `events` module, it is once again its own crate (`ruma-events`)
+- Removed `From` and `TryFrom` implementations for `RedactedBecause` in favor of named constructors
+  (`from_json` and `from_raw_event`)
+- Updated room IDs to not require a servername
+  - Removed `localpart` method from `RoomId` and `RoomOrAliasId`
+  - Changed `server_name` method on `RoomId` and `RoomOrAliasId` to return `Option<&str>`
+
+Improvements:
+
+- Allow padding when decoding the `Base64` type from a string
+- Add convenience methods for `push::Ruleset`:
+  - To update the server-default push rules
+  - To remove a user-defined push rule
+- Add `AsRef<[u8]>` implementations for identifier types
+- `PushCondition::EventMatch` and `FlattenedJson` now use escaped dotted paths (MSC3873 / Matrix 1.7)
+- Add support for `event_property_is` push condition (MSC3758 / Matrix 1.7)
+- Add support for `event_property_contains` push condition (MSC3966 / Matrix 1.7)
+- Add `MatrixVersion::V1_7` and `MatrixVersion::V1_8`
+- Add support for room version 11 according to MSC3820 / Matrix 1.8
+  - Adapt the redaction algorithm in `canonical_json`
+- Add unstable support for suppress edits push rule (MSC3958)
 
 # 0.11.3
 
@@ -209,7 +412,7 @@ Improvements:
 * Deserialize stringified integers for power levels without the `compat` feature
 * Add `JoinRule::KnockRestricted` (MSC3787)
 * Add `MatrixVersionId::V10` (MSC3604)
-* Add methods to sanitize messages according to the spec behind the `unstable-sanitize` feature
+* Add methods to sanitize messages according to the spec behind the `html` feature
   * Can also remove rich reply fallbacks
 * Implement `From<Owned*Id>` for `identifiers::matrix_uri::MatrixId`
 * Add unstable default push rule to ignore room server ACLs events (MSC3786)

@@ -13,7 +13,7 @@ struct WrappedError {
     error: Option<String>,
 }
 
-pub fn serialize<S>(
+pub(crate) fn serialize<S>(
     response: &BTreeMap<OwnedEventId, Result<(), String>>,
     serializer: S,
 ) -> Result<S::Ok, S::Error>
@@ -22,19 +22,14 @@ where
 {
     let mut map = serializer.serialize_map(Some(response.len()))?;
     for (key, value) in response {
-        let wrapped_error = WrappedError {
-            error: match value {
-                Ok(_) => None,
-                Err(error) => Some(error.clone()),
-            },
-        };
+        let wrapped_error = WrappedError { error: value.clone().err() };
         map.serialize_entry(&key, &wrapped_error)?;
     }
     map.end()
 }
 
 #[allow(clippy::type_complexity)]
-pub fn deserialize<'de, D>(
+pub(crate) fn deserialize<'de, D>(
     deserializer: D,
 ) -> Result<BTreeMap<OwnedEventId, Result<(), String>>, D::Error>
 where
@@ -73,7 +68,7 @@ where
 mod tests {
     use std::collections::BTreeMap;
 
-    use ruma_common::{event_id, OwnedEventId};
+    use ruma_common::{event_id, owned_event_id, OwnedEventId};
     use serde_json::{json, value::Serializer as JsonSerializer};
 
     use super::{deserialize, serialize};
@@ -81,10 +76,8 @@ mod tests {
     #[test]
     fn serialize_error() {
         let mut response: BTreeMap<OwnedEventId, Result<(), String>> = BTreeMap::new();
-        response.insert(
-            event_id!("$someevent:matrix.org").to_owned(),
-            Err("Some processing error.".into()),
-        );
+        response
+            .insert(owned_event_id!("$someevent:matrix.org"), Err("Some processing error.".into()));
 
         let serialized = serialize(&response, JsonSerializer).unwrap();
         let json = json!({
@@ -96,7 +89,7 @@ mod tests {
     #[test]
     fn serialize_ok() {
         let mut response: BTreeMap<OwnedEventId, Result<(), String>> = BTreeMap::new();
-        response.insert(event_id!("$someevent:matrix.org").to_owned(), Ok(()));
+        response.insert(owned_event_id!("$someevent:matrix.org"), Ok(()));
 
         let serialized = serialize(&response, serde_json::value::Serializer).unwrap();
         let json = json!({

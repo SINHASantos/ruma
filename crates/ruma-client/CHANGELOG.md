@@ -1,5 +1,27 @@
 # [unreleased]
 
+# 0.15.0
+
+Upgrade `ruma-client-api` to 0.20.0.
+
+# 0.14.0
+
+No changes for this version
+
+# 0.13.0
+
+Breaking changes:
+
+- Remove `isahc` feature
+
+Improvements:
+
+- Add `error_kind` accessor method to `Error<E, ruma_client_api::Error>`
+
+# 0.12.0
+
+No changes for this version
+
 # 0.11.0
 
 No changes for this version

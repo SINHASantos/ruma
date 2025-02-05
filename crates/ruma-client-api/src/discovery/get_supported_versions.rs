@@ -4,7 +4,7 @@
 //!
 //! [spec]: https://spec.matrix.org/latest/client-server-api/#get_matrixclientversions
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use ruma_common::{
     api::{request, response, MatrixVersion, Metadata},
@@ -14,7 +14,7 @@ use ruma_common::{
 const METADATA: Metadata = metadata! {
     method: GET,
     rate_limited: false,
-    authentication: None,
+    authentication: AccessTokenOptional,
     history: {
         1.0 => "/_matrix/client/versions",
     }
@@ -32,6 +32,9 @@ pub struct Response {
     pub versions: Vec<String>,
 
     /// Experimental features supported by the server.
+    ///
+    /// Servers can enable some unstable features only for some users, so this
+    /// list might differ when an access token is provided.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub unstable_features: BTreeMap<String, bool>,
 }
@@ -56,23 +59,20 @@ impl Response {
     /// The versions returned will be sorted from oldest to latest. Use [`.find()`][Iterator::find]
     /// or [`.rfind()`][DoubleEndedIterator::rfind] to look for a minimum or maximum version to use
     /// given some constraint.
-    pub fn known_versions(&self) -> impl Iterator<Item = MatrixVersion> + DoubleEndedIterator {
+    pub fn known_versions(&self) -> BTreeSet<MatrixVersion> {
         self.versions
             .iter()
             // Parse, discard unknown versions
             .flat_map(|s| s.parse::<MatrixVersion>())
-            // Map to key-value pairs where the key is the major-minor representation
-            // (which can be used as a BTreeMap unlike MatrixVersion itself)
-            .map(|v| (v.into_parts(), v))
-            // Collect to BTreeMap
-            .collect::<BTreeMap<_, _>>()
-            // Return an iterator over just the values (`MatrixVersion`s)
-            .into_values()
+            // Collect to BTreeSet
+            .collect()
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use ruma_common::api::MatrixVersion;
 
     use super::Response;
@@ -80,13 +80,13 @@ mod tests {
     #[test]
     fn known_versions() {
         let none = Response::new(vec![]);
-        assert_eq!(none.known_versions().next(), None);
+        assert_eq!(none.known_versions(), BTreeSet::new());
 
         let single_known = Response::new(vec!["r0.6.0".to_owned()]);
-        assert_eq!(single_known.known_versions().collect::<Vec<_>>(), vec![MatrixVersion::V1_0]);
+        assert_eq!(single_known.known_versions(), BTreeSet::from([MatrixVersion::V1_0]));
 
         let single_unknown = Response::new(vec!["v0.0".to_owned()]);
-        assert_eq!(single_unknown.known_versions().next(), None);
+        assert_eq!(single_unknown.known_versions(), BTreeSet::new());
     }
 
     #[test]
@@ -100,8 +100,8 @@ mod tests {
             "v1.2".to_owned(),
         ]);
         assert_eq!(
-            sorted.known_versions().collect::<Vec<_>>(),
-            vec![MatrixVersion::V1_0, MatrixVersion::V1_1, MatrixVersion::V1_2],
+            sorted.known_versions(),
+            BTreeSet::from([MatrixVersion::V1_0, MatrixVersion::V1_1, MatrixVersion::V1_2])
         );
 
         let sorted_reverse = Response::new(vec![
@@ -113,8 +113,8 @@ mod tests {
             "r0.0.1".to_owned(),
         ]);
         assert_eq!(
-            sorted_reverse.known_versions().collect::<Vec<_>>(),
-            vec![MatrixVersion::V1_0, MatrixVersion::V1_1, MatrixVersion::V1_2],
+            sorted_reverse.known_versions(),
+            BTreeSet::from([MatrixVersion::V1_0, MatrixVersion::V1_1, MatrixVersion::V1_2])
         );
 
         let random_order = Response::new(vec![
@@ -126,8 +126,8 @@ mod tests {
             "v1.2".to_owned(),
         ]);
         assert_eq!(
-            random_order.known_versions().collect::<Vec<_>>(),
-            vec![MatrixVersion::V1_0, MatrixVersion::V1_1, MatrixVersion::V1_2],
+            random_order.known_versions(),
+            BTreeSet::from([MatrixVersion::V1_0, MatrixVersion::V1_1, MatrixVersion::V1_2])
         );
     }
 }

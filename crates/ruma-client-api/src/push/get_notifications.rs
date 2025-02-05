@@ -10,12 +10,12 @@ pub mod v3 {
     use js_int::UInt;
     use ruma_common::{
         api::{request, response, Metadata},
-        events::AnySyncTimelineEvent,
         metadata,
         push::Action,
         serde::Raw,
         MilliSecondsSinceUnixEpoch, OwnedRoomId,
     };
+    use ruma_events::AnySyncTimelineEvent;
     use serde::{Deserialize, Serialize};
 
     const METADATA: Metadata = metadata! {
@@ -81,7 +81,7 @@ pub mod v3 {
 
     /// Represents a notification.
     #[derive(Clone, Debug, Deserialize, Serialize)]
-    #[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+    #[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
     pub struct Notification {
         /// The actions to perform when the conditions for this rule are met.
         pub actions: Vec<Action>,

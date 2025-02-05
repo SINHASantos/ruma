@@ -1,5 +1,49 @@
 # [unreleased]
 
+# 0.12.1
+
+Improvements:
+
+- Move unstable support for sending to-device events to appservices from
+  `unstable-msc2409` to `unstable-msc4203`.
+- Stabilize support for sending ephemeral data to appservices according to
+  Matrix 1.13.
+  - `Edu` was renamed to `EphemeralData` and uses the types from ruma-events.
+  - Custom data can be accessed with the `EphemeralData::data()` method.
+  - The `unstable-msc2409` cargo feature was removed.
+
+# 0.12.0
+
+Improvements:
+
+- The `unstable-exhaustive-types` cargo feature was replaced by the
+  `ruma_unstable_exhaustive_types` compile-time `cfg` setting. Like all `cfg`
+  settings, it can be enabled at compile-time with the `RUSTFLAGS` environment
+  variable, or inside `.cargo/config.toml`. It can also be enabled by setting
+  the `RUMA_UNSTABLE_EXHAUSTIVE_TYPES` environment variable.
+
+# 0.11.0
+
+Breaking changes:
+
+- Use `OwnedOneTimeKeyId` and `OneTimeKeyAlgorithm` instead of
+  `OwnedDeviceKeyId` and `DeviceKeyAlgorithm` respectively to identify one-time
+  and fallback keys and their algorithm.
+
+# 0.10.0
+
+Breaking changes:
+
+* The `url` field of `Registration` is now an `Option<String>`. This should have
+  always been the case.
+- The http crate had a major version bump to version 1.1
+
+# 0.9.0
+
+Improvements:
+
+- Add support for the appservice ping mechanism (MSC 2659 / Matrix 1.7)
+
 # 0.8.1
 
 Improvements:

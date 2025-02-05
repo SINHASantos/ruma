@@ -1,11 +1,11 @@
-//! `POST /_matrix/media/*/upload/{serverName}/{mediaId}`
+//! `PUT /_matrix/media/*/upload/{serverName}/{mediaId}`
 //!
 //! Upload media to an MXC URI that was created with create_mxc_uri.
 
-pub mod unstable {
-    //! `/unstable/` ([spec])
+pub mod v3 {
+    //! `/v3/` ([spec])
     //!
-    //! [spec]: https://github.com/tulir/matrix-doc/blob/asynchronous_uploads/proposals/2246-asynchronous-uploads.md
+    //! [spec]: https://spec.matrix.org/latest/client-server-api/#put_matrixmediav3uploadservernamemediaid
 
     use http::header::CONTENT_TYPE;
     use ruma_common::{
@@ -19,6 +19,7 @@ pub mod unstable {
         authentication: AccessToken,
         history: {
             unstable => "/_matrix/media/unstable/fi.mau.msc2246/upload/:server_name/:media_id",
+            1.7 => "/_matrix/media/v3/upload/:server_name/:media_id",
         }
     };
 
@@ -40,6 +41,11 @@ pub mod unstable {
         /// The content type of the file being uploaded.
         #[ruma_api(header = CONTENT_TYPE)]
         pub content_type: Option<String>,
+
+        /// The name of the file being uploaded.
+        #[ruma_api(query)]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub filename: Option<String>,
         // TODO: How does this and msc2448 (blurhash) interact?
     }
 
@@ -50,7 +56,7 @@ pub mod unstable {
     impl Request {
         /// Creates a new `Request` with the given file contents.
         pub fn new(media_id: String, server_name: OwnedServerName, file: Vec<u8>) -> Self {
-            Self { media_id, server_name, file, content_type: None }
+            Self { media_id, server_name, file, content_type: None, filename: None }
         }
 
         /// Creates a new `Request` with the given url and file contents.

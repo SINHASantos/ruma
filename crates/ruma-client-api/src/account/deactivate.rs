@@ -20,7 +20,7 @@ pub mod v3 {
     const METADATA: Metadata = metadata! {
         method: POST,
         rate_limited: true,
-        authentication: AccessToken,
+        authentication: AccessTokenOptional,
         history: {
             1.0 => "/_matrix/client/r0/account/deactivate",
             1.1 => "/_matrix/client/v3/account/deactivate",
@@ -39,6 +39,13 @@ pub mod v3 {
         /// identifier.
         #[serde(skip_serializing_if = "Option::is_none")]
         pub id_server: Option<String>,
+
+        /// Whether the user would like their content to be erased as much as possible from the
+        /// server.
+        ///
+        /// Defaults to `false`.
+        #[serde(default, skip_serializing_if = "ruma_common::serde::is_default")]
+        pub erase: bool,
     }
 
     /// Response type for the `deactivate` endpoint.

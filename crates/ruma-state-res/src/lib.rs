@@ -1,35 +1,33 @@
 use std::{
     borrow::Borrow,
-    cmp::Reverse,
+    cmp::{Ordering, Reverse},
     collections::{BinaryHeap, HashMap, HashSet},
     hash::Hash,
 };
 
-use itertools::Itertools;
 use js_int::{int, Int};
-use ruma_common::{
-    events::{
-        room::member::{MembershipState, RoomMemberEventContent},
-        StateEventType, TimelineEventType,
-    },
-    EventId, MilliSecondsSinceUnixEpoch, RoomVersionId,
+use ruma_common::{EventId, MilliSecondsSinceUnixEpoch, RoomVersionId};
+use ruma_events::{
+    room::member::{MembershipState, RoomMemberEventContent},
+    StateEventType, TimelineEventType,
 };
 use serde_json::from_str as from_json_str;
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, info, instrument, trace, warn};
 
 mod error;
 pub mod event_auth;
-mod power_levels;
+mod events;
 pub mod room_version;
-mod state_event;
 #[cfg(test)]
 mod test_utils;
 
-pub use error::{Error, Result};
-pub use event_auth::{auth_check, auth_types_for_event};
-use power_levels::PowerLevelsContentFields;
-pub use room_version::RoomVersion;
-pub use state_event::Event;
+use self::events::PowerLevelsContentFields;
+pub use self::{
+    error::{Error, Result},
+    event_auth::{auth_check, auth_types_for_event},
+    events::Event,
+    room_version::RoomVersion,
+};
 
 /// A mapping of event type and state_key to some value `T`, usually an `EventId`.
 pub type StateMap<T> = HashMap<(StateEventType, String), T>;
@@ -54,6 +52,7 @@ pub type StateMap<T> = HashMap<(StateEventType, String), T>;
 ///
 /// The caller of `resolve` must ensure that all the events are from the same room. Although this
 /// function takes a `RoomId` it does not check that each event is part of the same room.
+#[instrument(skip(state_sets, auth_chain_sets, fetch_event))]
 pub fn resolve<'a, E, SetIter>(
     room_version: &RoomVersionId,
     state_sets: impl IntoIterator<IntoIter = SetIter>,
@@ -65,21 +64,21 @@ where
     E::Id: 'a,
     SetIter: Iterator<Item = &'a StateMap<E::Id>> + Clone,
 {
-    info!("State resolution starting");
+    info!("state resolution starting");
 
     // Split non-conflicting and conflicting state
     let (clean, conflicting) = separate(state_sets.into_iter());
 
-    info!("non conflicting events: {}", clean.len());
-    trace!("{clean:?}");
+    info!(count = clean.len(), "non-conflicting events");
+    trace!(map = ?clean, "non-conflicting events");
 
     if conflicting.is_empty() {
         info!("no conflicting state found");
         return Ok(clean);
     }
 
-    info!("conflicting events: {}", conflicting.len());
-    debug!("{conflicting:?}");
+    info!(count = conflicting.len(), "conflicting events");
+    trace!(map = ?conflicting, "conflicting events");
 
     // `all_conflicted` contains unique items
     // synapse says `full_set = {eid for eid in full_conflicted_set if eid in event_map}`
@@ -89,8 +88,8 @@ where
         .filter(|id| fetch_event(id.borrow()).is_some())
         .collect();
 
-    info!("full conflicted set: {}", all_conflicted.len());
-    debug!("{all_conflicted:?}");
+    info!(count = all_conflicted.len(), "full conflicted set");
+    trace!(set = ?all_conflicted, "full conflicted set");
 
     // We used to check that all events are events from the correct room
     // this is now a check the caller of `resolve` must make.
@@ -106,16 +105,16 @@ where
     let sorted_control_levels =
         reverse_topological_power_sort(control_events, &all_conflicted, &fetch_event)?;
 
-    debug!("sorted control events: {}", sorted_control_levels.len());
-    trace!("{sorted_control_levels:?}");
+    debug!(count = sorted_control_levels.len(), "power events");
+    trace!(list = ?sorted_control_levels, "sorted power events");
 
     let room_version = RoomVersion::new(room_version)?;
     // Sequentially auth check each control event.
     let resolved_control =
         iterative_auth_check(&room_version, &sorted_control_levels, clean.clone(), &fetch_event)?;
 
-    debug!("resolved control events: {}", resolved_control.len());
-    trace!("{resolved_control:?}");
+    debug!(count = resolved_control.len(), "resolved power events");
+    trace!(map = ?resolved_control, "resolved power events");
 
     // At this point the control_events have been resolved we now have to
     // sort the remaining events using the mainline of the resolved power level.
@@ -129,17 +128,17 @@ where
         .cloned()
         .collect::<Vec<_>>();
 
-    debug!("events left to resolve: {}", events_to_resolve.len());
-    trace!("{events_to_resolve:?}");
+    debug!(count = events_to_resolve.len(), "events left to resolve");
+    trace!(list = ?events_to_resolve, "events left to resolve");
 
     // This "epochs" power level event
     let power_event = resolved_control.get(&(StateEventType::RoomPowerLevels, "".into()));
 
-    debug!("power event: {power_event:?}");
+    debug!(event_id = ?power_event, "power event");
 
     let sorted_left_events = mainline_sort(&events_to_resolve, power_event.cloned(), &fetch_event)?;
 
-    trace!("events left, sorted: {sorted_left_events:?}");
+    trace!(list = ?sorted_left_events, "events left, sorted");
 
     let mut resolved_state = iterative_auth_check(
         &room_version,
@@ -151,6 +150,9 @@ where
     // Add unconflicted state to the resolved state
     // We priorities the unconflicting state
     resolved_state.extend(clean);
+
+    info!("state resolution finished");
+
     Ok(resolved_state)
 }
 
@@ -162,27 +164,32 @@ where
 /// not exactly one event ID. This includes missing events, if one state_set includes an event that
 /// none of the other have this is a conflicting event.
 fn separate<'a, Id>(
-    state_sets_iter: impl Iterator<Item = &'a StateMap<Id>> + Clone,
+    state_sets_iter: impl Iterator<Item = &'a StateMap<Id>>,
 ) -> (StateMap<Id>, StateMap<Vec<Id>>)
 where
-    Id: Clone + Eq + 'a,
+    Id: Clone + Eq + Hash + 'a,
 {
+    let mut state_set_count = 0_usize;
+    let mut occurrences = HashMap::<_, HashMap<_, _>>::new();
+
+    let state_sets_iter = state_sets_iter.inspect(|_| state_set_count += 1);
+    for (k, v) in state_sets_iter.flatten() {
+        occurrences.entry(k).or_default().entry(v).and_modify(|x| *x += 1).or_insert(1);
+    }
+
     let mut unconflicted_state = StateMap::new();
     let mut conflicted_state = StateMap::new();
 
-    for key in state_sets_iter.clone().flat_map(|map| map.keys()).unique() {
-        let mut event_ids =
-            state_sets_iter.clone().map(|state_set| state_set.get(key)).collect::<Vec<_>>();
-
-        if event_ids.iter().all_equal() {
-            // First .unwrap() is okay because
-            // * event_ids has the same length as state_sets
-            // * we never enter the loop this code is in if state_sets is empty
-            let id = event_ids.pop().unwrap().expect("unconflicting `EventId` is not None");
-            unconflicted_state.insert(key.clone(), id.clone());
-        } else {
-            conflicted_state
-                .insert(key.clone(), event_ids.into_iter().filter_map(|o| o.cloned()).collect());
+    for (k, v) in occurrences {
+        for (id, occurrence_count) in v {
+            if occurrence_count == state_set_count {
+                unconflicted_state.insert((k.0.clone(), k.1.clone()), id.clone());
+            } else {
+                conflicted_state
+                    .entry((k.0.clone(), k.1.clone()))
+                    .and_modify(|x: &mut Vec<_>| x.push(id.clone()))
+                    .or_insert(vec![id.clone()]);
+            }
         }
     }
 
@@ -211,6 +218,7 @@ where
 ///
 /// The power level is negative because a higher power level is equated to an earlier (further back
 /// in time) origin server timestamp.
+#[instrument(skip_all)]
 fn reverse_topological_power_sort<E: Event>(
     events_to_sort: Vec<E::Id>,
     auth_diff: &HashSet<E::Id>,
@@ -231,7 +239,11 @@ fn reverse_topological_power_sort<E: Event>(
     let mut event_to_pl = HashMap::new();
     for event_id in graph.keys() {
         let pl = get_power_level_for_sender(event_id.borrow(), &fetch_event)?;
-        info!("{event_id} power level {pl}");
+        debug!(
+            event_id = event_id.borrow().as_str(),
+            power_level = i64::from(pl),
+            "found the power level of an event's sender",
+        );
 
         event_to_pl.insert(event_id.clone(), pl);
 
@@ -251,6 +263,7 @@ fn reverse_topological_power_sort<E: Event>(
 ///
 /// `key_fn` is used as to obtain the power level and age of an event for breaking ties (together
 /// with the event ID).
+#[instrument(skip_all)]
 pub fn lexicographical_topological_sort<Id, F>(
     graph: &HashMap<Id, HashSet<Id>>,
     key_fn: F,
@@ -259,14 +272,42 @@ where
     F: Fn(&EventId) -> Result<(Int, MilliSecondsSinceUnixEpoch)>,
     Id: Clone + Eq + Ord + Hash + Borrow<EventId>,
 {
-    #[derive(PartialEq, Eq, PartialOrd, Ord)]
+    #[derive(PartialEq, Eq)]
     struct TieBreaker<'a, Id> {
-        inv_power_level: Int,
-        age: MilliSecondsSinceUnixEpoch,
+        power_level: Int,
+        origin_server_ts: MilliSecondsSinceUnixEpoch,
         event_id: &'a Id,
     }
 
-    info!("starting lexicographical topological sort");
+    impl<Id> Ord for TieBreaker<'_, Id>
+    where
+        Id: Ord,
+    {
+        fn cmp(&self, other: &Self) -> Ordering {
+            // NOTE: the power level comparison is "backwards" intentionally.
+            // See the "Mainline ordering" section of the Matrix specification
+            // around where it says the following:
+            //
+            // > for events `x` and `y`, `x < y` if [...]
+            //
+            // <https://spec.matrix.org/latest/rooms/v11/#definitions>
+            other
+                .power_level
+                .cmp(&self.power_level)
+                .then(self.origin_server_ts.cmp(&other.origin_server_ts))
+                .then(self.event_id.cmp(other.event_id))
+        }
+    }
+
+    impl<Id> PartialOrd for TieBreaker<'_, Id>
+    where
+        Id: Ord,
+    {
+        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+            Some(self.cmp(other))
+        }
+    }
+
     // NOTE: an event that has no incoming edges happened most recently,
     // and an event that has no outgoing edges happened least recently.
 
@@ -287,12 +328,12 @@ where
 
     for (node, edges) in graph {
         if edges.is_empty() {
-            let (power_level, age) = key_fn(node.borrow())?;
+            let (power_level, origin_server_ts) = key_fn(node.borrow())?;
             // The `Reverse` is because rusts `BinaryHeap` sorts largest -> smallest we need
             // smallest -> largest
             zero_outdegree.push(Reverse(TieBreaker {
-                inv_power_level: -power_level,
-                age,
+                power_level,
+                origin_server_ts,
                 event_id: node,
             }));
         }
@@ -320,12 +361,8 @@ where
             // Only push on the heap once older events have been cleared
             out.remove(node.borrow());
             if out.is_empty() {
-                let (power_level, age) = key_fn(node.borrow())?;
-                heap.push(Reverse(TieBreaker {
-                    inv_power_level: -power_level,
-                    age,
-                    event_id: parent,
-                }));
+                let (power_level, origin_server_ts) = key_fn(parent.borrow())?;
+                heap.push(Reverse(TieBreaker { power_level, origin_server_ts, event_id: parent }));
             }
         }
 
@@ -345,8 +382,6 @@ fn get_power_level_for_sender<E: Event>(
     event_id: &EventId,
     fetch_event: impl Fn(&EventId) -> Option<E>,
 ) -> serde_json::Result<Int> {
-    info!("fetch event ({event_id}) senders power level");
-
     let event = fetch_event(event_id);
     let mut pl = None;
 
@@ -366,7 +401,6 @@ fn get_power_level_for_sender<E: Event>(
 
     if let Some(ev) = event {
         if let Some(&user_level) = content.users.get(ev.sender()) {
-            debug!("found {} at power_level {user_level}", ev.sender());
             return Ok(user_level);
         }
     }
@@ -389,9 +423,9 @@ fn iterative_auth_check<E: Event + Clone>(
     unconflicted_state: StateMap<E::Id>,
     fetch_event: impl Fn(&EventId) -> Option<E>,
 ) -> Result<StateMap<E::Id>> {
-    info!("starting iterative auth check");
+    debug!("starting iterative auth check");
 
-    debug!("performing auth checks on {events_to_check:?}");
+    trace!(list = ?events_to_check, "events to check");
 
     let mut resolved_state = unconflicted_state;
 
@@ -414,7 +448,7 @@ fn iterative_auth_check<E: Event + Clone>(
                     ev,
                 );
             } else {
-                warn!("auth event id for {aid} is missing {event_id}");
+                warn!(event_id = aid.borrow().as_str(), "missing auth event");
             }
         }
 
@@ -432,8 +466,6 @@ fn iterative_auth_check<E: Event + Clone>(
             }
         }
 
-        debug!("event to check {:?}", event.event_id());
-
         // The key for this is (eventType + a state_key of the signed token not sender) so
         // search for it
         let current_third_party = auth_events.iter().find_map(|(_, pdu)| {
@@ -447,7 +479,7 @@ fn iterative_auth_check<E: Event + Clone>(
             resolved_state.insert(event.event_type().with_state_key(state_key), event_id.clone());
         } else {
             // synapse passes here on AuthError. We do not add this event to resolved_state.
-            warn!("event {event_id} failed the authentication check");
+            warn!("event failed the authentication check");
         }
 
         // TODO: if these functions are ever made async here
@@ -536,7 +568,7 @@ fn get_mainline_depth<E: Event>(
     fetch_event: impl Fn(&EventId) -> Option<E>,
 ) -> Result<usize> {
     while let Some(sort_ev) = event {
-        debug!("mainline event_id {}", sort_ev.event_id());
+        debug!(event_id = sort_ev.event_id().borrow().as_str(), "mainline");
         let id = sort_ev.event_id();
         if let Some(depth) = mainline_map.get(id.borrow()) {
             return Ok(*depth);
@@ -646,12 +678,10 @@ mod tests {
     use js_int::{int, uint};
     use maplit::{hashmap, hashset};
     use rand::seq::SliceRandom;
-    use ruma_common::{
-        events::{
-            room::join_rules::{JoinRule, RoomJoinRulesEventContent},
-            StateEventType, TimelineEventType,
-        },
-        MilliSecondsSinceUnixEpoch, OwnedEventId, RoomVersionId,
+    use ruma_common::{MilliSecondsSinceUnixEpoch, OwnedEventId, RoomVersionId};
+    use ruma_events::{
+        room::join_rules::{JoinRule, RoomJoinRulesEventContent},
+        StateEventType, TimelineEventType,
     };
     use serde_json::{json, value::to_raw_value as to_raw_json_value};
     use tracing::debug;
@@ -686,7 +716,7 @@ mod tests {
 
         let sorted_power_events =
             crate::reverse_topological_power_sort(power_events, &auth_chain, |id| {
-                events.get(id).map(Arc::clone)
+                events.get(id).cloned()
             })
             .unwrap();
 
@@ -694,7 +724,7 @@ mod tests {
             &RoomVersion::V6,
             &sorted_power_events,
             HashMap::new(), // unconflicted events
-            |id| events.get(id).map(Arc::clone),
+            |id| events.get(id).cloned(),
         )
         .expect("iterative auth check failed on resolved events");
 
@@ -707,7 +737,7 @@ mod tests {
             resolved_power.get(&(StateEventType::RoomPowerLevels, "".to_owned())).cloned();
 
         let sorted_event_ids =
-            crate::mainline_sort(&events_to_sort, power_level, |id| events.get(id).map(Arc::clone))
+            crate::mainline_sort(&events_to_sort, power_level, |id| events.get(id).cloned())
                 .unwrap();
 
         assert_eq!(
@@ -1060,7 +1090,7 @@ mod tests {
                     store.auth_event_ids(room_id(), map.values().cloned().collect()).unwrap()
                 })
                 .collect(),
-            |id| ev_map.get(id).map(Arc::clone),
+            |id| ev_map.get(id).cloned(),
         ) {
             Ok(state) => state,
             Err(e) => panic!("{e}"),
@@ -1149,7 +1179,7 @@ mod tests {
         .map(|ev| (ev.event_type().with_state_key(ev.state_key().unwrap()), ev.event_id.clone()))
         .collect::<StateMap<_>>();
 
-        let ev_map = store.0.clone();
+        let ev_map = &store.0;
         let state_sets = [state_set_a, state_set_b];
         let resolved = match crate::resolve(
             &RoomVersionId::V6,
@@ -1160,29 +1190,22 @@ mod tests {
                     store.auth_event_ids(room_id(), map.values().cloned().collect()).unwrap()
                 })
                 .collect(),
-            |id| ev_map.get(id).map(Arc::clone),
+            |id| ev_map.get(id).cloned(),
         ) {
             Ok(state) => state,
             Err(e) => panic!("{e}"),
         };
 
         debug!(
-            "{:#?}",
-            resolved
+            resolved = ?resolved
                 .iter()
                 .map(|((ty, key), id)| format!("(({ty}{key:?}), {id})"))
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>(),
+            "resolved state",
         );
 
-        let expected = vec![
-            "$CREATE:foo",
-            "$IJR:foo",
-            "$PA:foo",
-            "$IMA:foo",
-            "$IMB:foo",
-            "$IMC:foo",
-            "$MB:foo",
-        ];
+        let expected =
+            ["$CREATE:foo", "$IJR:foo", "$PA:foo", "$IMA:foo", "$IMB:foo", "$IMC:foo", "$MB:foo"];
 
         for id in expected.iter().map(|i| event_id(i)) {
             // make sure our resolved events are equal to the expected list
@@ -1275,5 +1298,115 @@ mod tests {
         .into_iter()
         .map(|ev| (ev.event_id.clone(), ev))
         .collect()
+    }
+
+    macro_rules! state_set {
+        ($($kind:expr => $key:expr => $id:expr),* $(,)?) => {{
+            #[allow(unused_mut)]
+            let mut x = StateMap::new();
+            $(
+                x.insert(($kind, $key.to_owned()), $id);
+            )*
+            x
+        }};
+    }
+
+    #[test]
+    fn separate_unique_conflicted() {
+        let (unconflicted, conflicted) = super::separate(
+            [
+                state_set![StateEventType::RoomMember => "@a:hs1" => 0],
+                state_set![StateEventType::RoomMember => "@b:hs1" => 1],
+                state_set![StateEventType::RoomMember => "@c:hs1" => 2],
+            ]
+            .iter(),
+        );
+
+        assert_eq!(unconflicted, StateMap::new());
+        assert_eq!(
+            conflicted,
+            state_set![
+                StateEventType::RoomMember => "@a:hs1" => vec![0],
+                StateEventType::RoomMember => "@b:hs1" => vec![1],
+                StateEventType::RoomMember => "@c:hs1" => vec![2],
+            ],
+        );
+    }
+
+    #[test]
+    fn separate_conflicted() {
+        let (unconflicted, mut conflicted) = super::separate(
+            [
+                state_set![StateEventType::RoomMember => "@a:hs1" => 0],
+                state_set![StateEventType::RoomMember => "@a:hs1" => 1],
+                state_set![StateEventType::RoomMember => "@a:hs1" => 2],
+            ]
+            .iter(),
+        );
+
+        // HashMap iteration order is random, so sort this before asserting on it
+        for v in conflicted.values_mut() {
+            v.sort_unstable();
+        }
+
+        assert_eq!(unconflicted, StateMap::new());
+        assert_eq!(
+            conflicted,
+            state_set![
+                StateEventType::RoomMember => "@a:hs1" => vec![0, 1, 2],
+            ],
+        );
+    }
+
+    #[test]
+    fn separate_unconflicted() {
+        let (unconflicted, conflicted) = super::separate(
+            [
+                state_set![StateEventType::RoomMember => "@a:hs1" => 0],
+                state_set![StateEventType::RoomMember => "@a:hs1" => 0],
+                state_set![StateEventType::RoomMember => "@a:hs1" => 0],
+            ]
+            .iter(),
+        );
+
+        assert_eq!(
+            unconflicted,
+            state_set![
+                StateEventType::RoomMember => "@a:hs1" => 0,
+            ],
+        );
+        assert_eq!(conflicted, StateMap::new());
+    }
+
+    #[test]
+    fn separate_mixed() {
+        let (unconflicted, conflicted) = super::separate(
+            [
+                state_set![StateEventType::RoomMember => "@a:hs1" => 0],
+                state_set![
+                    StateEventType::RoomMember => "@a:hs1" => 0,
+                    StateEventType::RoomMember => "@b:hs1" => 1,
+                ],
+                state_set![
+                    StateEventType::RoomMember => "@a:hs1" => 0,
+                    StateEventType::RoomMember => "@c:hs1" => 2,
+                ],
+            ]
+            .iter(),
+        );
+
+        assert_eq!(
+            unconflicted,
+            state_set![
+                StateEventType::RoomMember => "@a:hs1" => 0,
+            ],
+        );
+        assert_eq!(
+            conflicted,
+            state_set![
+                StateEventType::RoomMember => "@b:hs1" => vec![1],
+                StateEventType::RoomMember => "@c:hs1" => vec![2],
+            ],
+        );
     }
 }

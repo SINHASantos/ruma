@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use as_variant::as_variant;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::value::{RawValue as RawJsonValue, Value as JsonValue};
 
@@ -10,17 +11,10 @@ use crate::serde::from_raw_json_value;
 ///
 /// See [the spec](https://spec.matrix.org/latest/client-server-api/#actions) for details.
 #[derive(Clone, Debug)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub enum Action {
     /// Causes matching events to generate a notification.
     Notify,
-
-    /// Prevents matching events from generating a notification.
-    DontNotify,
-
-    /// Behaves like notify but homeservers may choose to coalesce multiple events
-    /// into a single notification.
-    Coalesce,
 
     /// Sets an entry in the 'tweaks' dictionary sent to the push gateway.
     SetTweak(Tweak),
@@ -30,9 +24,26 @@ pub enum Action {
     _Custom(CustomAction),
 }
 
+impl Action {
+    /// Whether this action is an `Action::SetTweak(Tweak::Highlight(true))`.
+    pub fn is_highlight(&self) -> bool {
+        matches!(self, Action::SetTweak(Tweak::Highlight(true)))
+    }
+
+    /// Whether this action should trigger a notification.
+    pub fn should_notify(&self) -> bool {
+        matches!(self, Action::Notify)
+    }
+
+    /// The sound that should be played with this action, if any.
+    pub fn sound(&self) -> Option<&str> {
+        as_variant!(self, Action::SetTweak(Tweak::Sound(sound)) => sound)
+    }
+}
+
 /// The `set_tweak` action.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 #[serde(from = "tweak_serde::Tweak", into = "tweak_serde::Tweak")]
 pub enum Tweak {
     /// A string representing the sound to be played when this notification arrives.
@@ -71,8 +82,6 @@ impl<'de> Deserialize<'de> for Action {
         match &custom {
             CustomAction::String(s) => match s.as_str() {
                 "notify" => Ok(Action::Notify),
-                "dont_notify" => Ok(Action::DontNotify),
-                "coalesce" => Ok(Action::Coalesce),
                 _ => Ok(Action::_Custom(custom)),
             },
             CustomAction::Object(o) => {
@@ -93,8 +102,6 @@ impl Serialize for Action {
     {
         match self {
             Action::Notify => serializer.serialize_unit_variant("Action", 0, "notify"),
-            Action::DontNotify => serializer.serialize_unit_variant("Action", 1, "dont_notify"),
-            Action::Coalesce => serializer.serialize_unit_variant("Action", 2, "coalesce"),
             Action::SetTweak(kind) => kind.serialize(serializer),
             Action::_Custom(custom) => custom.serialize(serializer),
         }
@@ -103,6 +110,7 @@ impl Serialize for Action {
 
 /// An unknown action.
 #[doc(hidden)]
+#[allow(unknown_lints, unnameable_types)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum CustomAction {
@@ -173,20 +181,20 @@ mod tweak_serde {
 
 #[cfg(test)]
 mod tests {
-    use assert_matches::assert_matches;
+    use assert_matches2::assert_matches;
     use serde_json::{from_value as from_json_value, json, to_value as to_json_value};
 
     use super::{Action, Tweak};
 
     #[test]
     fn serialize_string() {
-        assert_eq!(to_json_value(&Action::Notify).unwrap(), json!("notify"));
+        assert_eq!(to_json_value(Action::Notify).unwrap(), json!("notify"));
     }
 
     #[test]
     fn serialize_tweak_sound() {
         assert_eq!(
-            to_json_value(&Action::SetTweak(Tweak::Sound("default".into()))).unwrap(),
+            to_json_value(Action::SetTweak(Tweak::Sound("default".into()))).unwrap(),
             json!({ "set_tweak": "sound", "value": "default" })
         );
     }
@@ -194,12 +202,12 @@ mod tests {
     #[test]
     fn serialize_tweak_highlight() {
         assert_eq!(
-            to_json_value(&Action::SetTweak(Tweak::Highlight(true))).unwrap(),
+            to_json_value(Action::SetTweak(Tweak::Highlight(true))).unwrap(),
             json!({ "set_tweak": "highlight" })
         );
 
         assert_eq!(
-            to_json_value(&Action::SetTweak(Tweak::Highlight(false))).unwrap(),
+            to_json_value(Action::SetTweak(Tweak::Highlight(false))).unwrap(),
             json!({ "set_tweak": "highlight", "value": false })
         );
     }
@@ -215,9 +223,9 @@ mod tests {
             "set_tweak": "sound",
             "value": "default"
         });
-        let value = assert_matches!(
+        assert_matches!(
             from_json_value::<Action>(json_data),
-            Ok(Action::SetTweak(Tweak::Sound(value))) => value
+            Ok(Action::SetTweak(Tweak::Sound(value)))
         );
         assert_eq!(value, "default");
     }

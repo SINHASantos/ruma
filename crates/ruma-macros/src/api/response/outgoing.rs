@@ -1,10 +1,11 @@
 use proc_macro2::TokenStream;
 use quote::quote;
+use syn::Ident;
 
 use super::{Response, ResponseField};
 
 impl Response {
-    pub fn expand_outgoing(&self, ruma_common: &TokenStream) -> TokenStream {
+    pub fn expand_outgoing(&self, status_ident: &Ident, ruma_common: &TokenStream) -> TokenStream {
         let bytes = quote! { #ruma_common::exports::bytes };
         let http = quote! { #ruma_common::exports::http };
 
@@ -21,7 +22,7 @@ impl Response {
                             if let Some(header) = self.#field_name {
                                 headers.insert(
                                     #header_name,
-                                    header.parse()?,
+                                    header.to_string().parse()?,
                                 );
                             }
                         }
@@ -29,7 +30,7 @@ impl Response {
                     _ => quote! {
                         headers.insert(
                             #header_name,
-                            self.#field_name.parse()?,
+                            self.#field_name.to_string().parse()?,
                         );
                     },
                 }
@@ -46,7 +47,7 @@ impl Response {
                 response_field.as_body_field().map(|field| {
                     let field_name =
                         field.ident.as_ref().expect("expected field to have an identifier");
-                    let cfg_attrs = field.attrs.iter().filter(|a| a.path.is_ident("cfg"));
+                    let cfg_attrs = field.attrs.iter().filter(|a| a.path().is_ident("cfg"));
 
                     quote! {
                         #( #cfg_attrs )*
@@ -68,6 +69,7 @@ impl Response {
                     self,
                 ) -> ::std::result::Result<#http::Response<T>, #ruma_common::api::error::IntoHttpError> {
                     let mut resp_builder = #http::Response::builder()
+                        .status(#http::StatusCode::#status_ident)
                         .header(#http::header::CONTENT_TYPE, "application/json");
 
                     if let Some(mut headers) = resp_builder.headers_mut() {

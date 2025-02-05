@@ -3,53 +3,37 @@
 use std::{
     collections::HashMap,
     fs::{self, File},
-    io::{BufRead, BufReader},
+    io::{BufRead, BufReader, ErrorKind},
     path::{Path, PathBuf},
 };
 
 use html5gum::{Token, Tokenizer};
-use isahc::ReadResponseExt;
 
 use crate::Result;
 
-/// A Matrix spec.
-#[derive(Debug, Clone, Copy)]
-enum Spec {
-    /// The old Matrix spec.
-    Old,
-    /// The new Matrix spec.
-    New,
-}
+/// Authorized URLs pointing to the old specs.
+const OLD_URL_WHITELIST: &[&str] =
+    &["https://spec.matrix.org/historical/index.html#complete-list-of-room-versions"];
 
-impl Spec {
-    /// Authorized URLs pointing to the old specs.
-    const OLD_URL_WHITELIST: &'static [&'static str] =
-        &["https://matrix.org/docs/spec/index.html#complete-list-of-room-versions"];
+/// Authorized versions in URLs pointing to the new specs.
+const NEW_VERSION_WHITELIST: &[&str] = &[
+    "v1.1", "v1.2", "v1.3", "v1.4", "v1.5", "v1.6", "v1.7", "v1.8", "v1.9", "v1.10", "v1.11",
+    "v1.12", "v1.13",
+    "latest",
+    // This should only be enabled if a legitimate use case is found.
+    // "unstable",
+];
 
-    /// Authorized versions in URLs pointing to the new specs.
-    const NEW_VERSION_WHITELIST: &'static [&'static str] = &[
-        "v1.1", "v1.2", "v1.3", "v1.4", "v1.5", "v1.6",
-        "latest",
-        // This should only be enabled if a legitimate use case is found.
-        // "unstable",
-    ];
+/// The version of URLs pointing to the old spec.
+const OLD_VERSION: &str = "historical";
 
-    /// Get the start of the URLs pointing to this `Spec`.
-    const fn url_prefix(&self) -> &'static str {
-        match self {
-            Spec::Old => "https://matrix.org/docs/spec/",
-            Spec::New => "https://spec.matrix.org/",
-        }
-    }
-}
+/// The start of the URLs pointing to the spec.
+const URL_PREFIX: &str = "https://spec.matrix.org/";
 
 /// A link to the spec.
 struct SpecLink {
     /// The URL of the link.
     url: String,
-
-    /// The spec variant of the link.
-    spec: Spec,
 
     /// The path of the file containing the link.
     path: PathBuf,
@@ -60,15 +44,8 @@ struct SpecLink {
 
 impl SpecLink {
     /// Create a new `SpecLink`.
-    fn new(url: String, spec: Spec, path: PathBuf, line: u16) -> Self {
-        Self { url, spec, path, line }
-    }
-
-    /// Get the minimum length of the link.
-    ///
-    /// That is the length of the start of the URL used to detect the link.
-    const fn min_len(&self) -> usize {
-        self.spec.url_prefix().len()
+    fn new(url: String, path: PathBuf, line: u16) -> Self {
+        Self { url, path, line }
     }
 }
 
@@ -108,19 +85,28 @@ fn collect_links(path: &Path) -> Result<Vec<SpecLink>> {
         let mut content = BufReader::new(File::open(path)?);
 
         // We can assume a spec link will never overflow to another line.
-        while content.read_line(&mut buf)? > 0 {
+        loop {
+            match content.read_line(&mut buf) {
+                Ok(read) => {
+                    if read == 0 {
+                        break;
+                    }
+                }
+                Err(err) => {
+                    if err.kind() == ErrorKind::InvalidData {
+                        // The content is not UTF-8 text, skip.
+                        break;
+                    } else {
+                        return Err(err.into());
+                    }
+                }
+            };
+
             line += 1;
 
-            for spec in [Spec::Old, Spec::New] {
-                // If for some reason a line has 2 spec links.
-                for (start_idx, _) in buf.match_indices(spec.url_prefix()) {
-                    links.push(SpecLink::new(
-                        get_full_link(&buf[start_idx..]),
-                        spec,
-                        path.to_owned(),
-                        line,
-                    ));
-                }
+            // If for some reason a line has 2 spec links.
+            for (start_idx, _) in buf.match_indices(URL_PREFIX) {
+                links.push(SpecLink::new(get_full_link(&buf[start_idx..]), path.to_owned(), line));
             }
 
             buf.clear();
@@ -151,22 +137,20 @@ fn check_whitelist(links: &[SpecLink]) -> Result<()> {
     let mut err_nb: u16 = 0;
 
     for link in links {
-        match link.spec {
-            Spec::Old => {
-                if !Spec::OLD_URL_WHITELIST.contains(&link.url.as_str()) {
-                    err_nb += 1;
-                    print_link_err("Old spec link not in whitelist", link);
-                }
+        let url_without_prefix = &link.url[URL_PREFIX.len()..];
+
+        if url_without_prefix.starts_with(&format!("{OLD_VERSION}/")) {
+            // Only old spec links in the whitelist are allowed.
+            if !OLD_URL_WHITELIST.contains(&link.url.as_str()) {
+                err_nb += 1;
+                print_link_err("Old spec link not in whitelist", link);
             }
-            Spec::New => {
-                if !Spec::NEW_VERSION_WHITELIST
-                    .iter()
-                    .any(|version| link.url[link.min_len()..].starts_with(version))
-                {
-                    err_nb += 1;
-                    print_link_err("New spec link with wrong version", link);
-                }
-            }
+        } else if !NEW_VERSION_WHITELIST
+            .iter()
+            .any(|version| url_without_prefix.starts_with(&format!("{version}/")))
+        {
+            err_nb += 1;
+            print_link_err("New spec link with wrong version", link);
         }
     }
 
@@ -196,7 +180,7 @@ fn check_targets(links: &[SpecLink]) -> Result<()> {
                         // Don't allow links to the latest spec with duplicate IDs, they might point
                         // to another part of the spec in a new version.
                         if *has_duplicates == HasDuplicates::Yes
-                            && link.url[link.min_len()..].starts_with("latest/")
+                            && link.url[URL_PREFIX.len()..].starts_with("latest/")
                         {
                             err_nb += 1;
                             print_link_err("Spec link to latest version with non-unique ID", link);
@@ -227,57 +211,82 @@ fn check_targets(links: &[SpecLink]) -> Result<()> {
 ///
 /// Returns an error if the URL points to an invalid HTML page.
 fn get_page_ids(url: &str) -> Result<HashMap<String, HasDuplicates>> {
-    let mut page = isahc::get(url)?;
+    let page = reqwest::blocking::get(url)?;
 
     let html = page.text()?;
     let mut ids = HashMap::new();
 
-    for token in Tokenizer::new(&html).infallible() {
+    for Ok(token) in Tokenizer::new(&html) {
         let Token::StartTag(tag) = token else {
             continue;
         };
 
-        let Some(id) = tag.attributes.get(b"id".as_slice())
-        .and_then(|s| String::from_utf8(s.0.clone()).ok()) else {
+        // For the URLs using the "latest" version, log the actual version we got.
+        if url[URL_PREFIX.len()..].starts_with("latest/") {
+            // Let's use the `meta` element with the `og:url` property, it contains the original
+            // relative URL of the page.
+            if tag.name.0 == b"meta"
+                && tag
+                    .attributes
+                    .get(b"property".as_slice())
+                    .is_some_and(|value| value.0 == b"og:url")
+            {
+                match tag.attributes.get(b"content".as_slice()) {
+                    Some(value) => {
+                        println!(
+                            "Original URL for latest spec page: {}",
+                            String::from_utf8_lossy(value)
+                        );
+                    }
+                    None => println!(
+                        "Could not get original URL for latest spec page: /{}",
+                        &url[URL_PREFIX.len()..]
+                    ),
+                }
+            }
+        }
+
+        let Some(id) =
+            tag.attributes.get(b"id".as_slice()).and_then(|s| String::from_utf8(s.0.clone()).ok())
+        else {
             continue;
         };
 
-        let (id, has_duplicates) = uniquify_heading_id(id, &mut ids);
+        let has_duplicates = heading_id_has_duplicates(&id, &mut ids);
+
         ids.insert(id, has_duplicates);
     }
 
     Ok(ids)
 }
 
-/// Make sure the ID is unique in the page, if not make it unique.
+/// Check whether the given heading ID has duplicates in the given map.
 ///
-/// This is necessary because Matrix spec pages do that in JavaScript, so IDs
-/// are not unique in the source.
-///
-/// This is a reimplementation of the algorithm used for the spec.
-///
-/// See <https://github.com/matrix-org/matrix-spec/blob/6b02e393082570db2d0a651ddb79a365bc4a0f8d/static/js/toc.js#L25-L37>.
-fn uniquify_heading_id(
-    mut id: String,
+/// This check is necessary because duplicates IDs have a number depending on their occurrence in a
+/// HTML page. If a duplicate ID is added, moved or removed from the spec, its number might change
+/// from one version to the next.
+fn heading_id_has_duplicates(
+    id: &str,
     unique_ids: &mut HashMap<String, HasDuplicates>,
-) -> (String, HasDuplicates) {
-    let base_id = id.clone();
-    let mut counter: u16 = 0;
-    let mut has_duplicates = HasDuplicates::No;
+) -> HasDuplicates {
+    // IDs that should be duplicates end with `-{number}`.
+    let Some((start, _end)) =
+        id.rsplit_once('-').filter(|(_start, end)| end.chars().all(|c| c.is_ascii_digit()))
+    else {
+        return HasDuplicates::No;
+    };
 
-    while let Some(other_id_has_dup) = unique_ids.get_mut(&id) {
-        has_duplicates = HasDuplicates::Yes;
+    // Update the first duplicate ID, because it doesn't end with a number.
+    if let Some(other_id_has_dup) = unique_ids.get_mut(start) {
         *other_id_has_dup = HasDuplicates::Yes;
-        counter += 1;
-        id = format!("{base_id}-{counter}");
     }
 
-    (id, has_duplicates)
+    HasDuplicates::Yes
 }
 
 fn print_link_err(error: &str, link: &SpecLink) {
     println!(
-        "\n{error}\nfile: {}:{}\nlink: {}",
+        "\n{error}\n  file: {}:{}\n  link: {}",
         link.path.display(),
         link.line,
         link.url.get(..80).unwrap_or(&link.url),

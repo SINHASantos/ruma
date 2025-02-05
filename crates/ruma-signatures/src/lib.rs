@@ -1,5 +1,5 @@
-#![doc(html_favicon_url = "https://www.ruma.io/favicon.ico")]
-#![doc(html_logo_url = "https://www.ruma.io/images/logo.png")]
+#![doc(html_favicon_url = "https://ruma.dev/favicon.ico")]
+#![doc(html_logo_url = "https://ruma.dev/images/logo.png")]
 //! Digital signatures according to the [Matrix](https://matrix.org/) specification.
 //!
 //! Digital signatures are used by Matrix homeservers to verify the authenticity of events in the
@@ -46,14 +46,16 @@
 
 use ruma_common::serde::{AsRefStr, DisplayAsRefStr};
 
-pub use error::{Error, JsonError, ParseError, VerificationError};
-pub use functions::{
-    canonical_json, content_hash, hash_and_sign_event, reference_hash, sign_json, verify_event,
-    verify_json,
+pub use self::{
+    error::{Error, JsonError, ParseError, VerificationError},
+    functions::{
+        canonical_json, content_hash, hash_and_sign_event, reference_hash, sign_json, verify_event,
+        verify_json,
+    },
+    keys::{Ed25519KeyPair, KeyPair, PublicKeyMap, PublicKeySet},
+    signatures::Signature,
+    verification::Verified,
 };
-pub use keys::{Ed25519KeyPair, KeyPair, PublicKeyMap, PublicKeySet};
-pub use signatures::Signature;
-pub use verification::Verified;
 
 mod error;
 mod functions;
@@ -63,7 +65,7 @@ mod verification;
 
 /// The algorithm used for signing data.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, AsRefStr, DisplayAsRefStr)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 #[ruma_enum(rename_all = "snake_case")]
 pub enum Algorithm {
     /// The Ed25519 digital signature algorithm.
@@ -85,7 +87,11 @@ fn split_id(id: &str) -> Result<(Algorithm, String), Error> {
 
     let version = signature_id[1];
 
-    if !version.bytes().all(|ch| ch.is_ascii_alphanumeric() || ch == b'_') {
+    #[cfg(feature = "compat-signature-id")]
+    const EXTRA_ALLOWED: [u8; 3] = [b'_', b'+', b'/'];
+    #[cfg(not(feature = "compat-signature-id"))]
+    const EXTRA_ALLOWED: [u8; 1] = [b'_'];
+    if !version.bytes().all(|ch| ch.is_ascii_alphanumeric() || EXTRA_ALLOWED.contains(&ch)) {
         return Err(Error::InvalidVersion(version.into()));
     }
 

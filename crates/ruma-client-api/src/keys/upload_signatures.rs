@@ -19,9 +19,8 @@ pub mod v3 {
     use serde::{Deserialize, Serialize};
     use serde_json::value::RawValue as RawJsonValue;
 
-    use crate::PrivOwnedStr;
-
     pub use super::iter::SignedKeysIter;
+    use crate::PrivOwnedStr;
 
     const METADATA: Metadata = metadata! {
         method: POST,
@@ -46,6 +45,7 @@ pub mod v3 {
     #[derive(Default)]
     pub struct Response {
         /// Signature processing failures.
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
         pub failures: BTreeMap<OwnedUserId, BTreeMap<String, Failure>>,
     }
 
@@ -101,6 +101,7 @@ pub mod v3 {
         errcode: FailureErrorCode,
 
         /// Human-readable error message.
+        #[cfg_attr(feature = "compat-upload-signatures", serde(alias = "message"))]
         error: String,
     }
 
@@ -115,6 +116,44 @@ pub mod v3 {
 
         #[doc(hidden)]
         _Custom(PrivOwnedStr),
+    }
+
+    #[cfg(all(test, feature = "client"))]
+    mod tests {
+        use super::ResponseBody;
+
+        #[cfg(feature = "compat-upload-signatures")]
+        #[test]
+        fn deserialize_synapse_response() {
+            use ruma_common::user_id;
+
+            use super::FailureErrorCode;
+
+            const JSON: &str = r#"{
+                "failures": {
+                    "@richvdh:sw1v.org": {
+                        "EOZDSWJVGZ": {
+                            "status": 400,
+                            "errcode": "M_INVALID_SIGNATURE",
+                            "message": "400: Invalid signature"
+                        }
+                    }
+                }
+            }"#;
+
+            let parsed: ResponseBody = serde_json::from_str(JSON).unwrap();
+            let failure = &parsed.failures[user_id!("@richvdh:sw1v.org")]["EOZDSWJVGZ"];
+            assert_eq!(failure.errcode, FailureErrorCode::InvalidSignature);
+            assert_eq!(failure.error, "400: Invalid signature");
+        }
+
+        #[test]
+        fn deserialize_empty_response() {
+            const JSON: &str = r#"{}"#;
+
+            let _parsed: ResponseBody = serde_json::from_str(JSON)
+                .expect("We should be able to deserialize an empty keys/signatures/upload");
+        }
     }
 }
 

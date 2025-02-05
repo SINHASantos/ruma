@@ -2,8 +2,9 @@ use ruma_macros::IdZst;
 
 #[cfg(feature = "rand")]
 use super::generate_localpart;
+use super::{IdParseError, KeyName};
 
-/// A Matrix key ID.
+/// A Matrix device ID.
 ///
 /// Device identifiers in Matrix are completely opaque character sequences. This type is provided
 /// simply for its semantic value.
@@ -40,10 +41,23 @@ impl DeviceId {
     }
 }
 
-#[cfg(all(test, feature = "rand"))]
+impl KeyName for DeviceId {
+    fn validate(_s: &str) -> Result<(), IdParseError> {
+        Ok(())
+    }
+}
+
+impl KeyName for OwnedDeviceId {
+    fn validate(_s: &str) -> Result<(), IdParseError> {
+        Ok(())
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::{DeviceId, OwnedDeviceId};
 
+    #[cfg(feature = "rand")]
     #[test]
     fn generate_device_id() {
         assert_eq!(DeviceId::new().as_str().len(), 8);

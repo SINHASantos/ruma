@@ -4,14 +4,13 @@ use std::{error::Error, fmt};
 pub use ruma_common::push::RuleKind;
 use ruma_common::{
     push::{
-        Action, ConditionalPushRule, ConditionalPushRuleInit, HttpPusherData, PatternedPushRule,
-        PatternedPushRuleInit, PushCondition, SimplePushRule, SimplePushRuleInit,
+        Action, AnyPushRule, AnyPushRuleRef, ConditionalPushRule, ConditionalPushRuleInit,
+        HttpPusherData, PatternedPushRule, PatternedPushRuleInit, PushCondition, SimplePushRule,
+        SimplePushRuleInit,
     },
-    serde::{JsonObject, StringEnum},
+    serde::JsonObject,
 };
 use serde::{Deserialize, Serialize};
-
-use crate::PrivOwnedStr;
 
 pub mod delete_pushrule;
 pub mod get_notifications;
@@ -32,7 +31,7 @@ pub mod set_pushrule_enabled;
 ///
 /// To create an instance of this type, use one of its `From` implementations.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct PushRule {
     /// The actions to perform when this rule is matched.
     pub actions: Vec<Action>,
@@ -110,6 +109,28 @@ impl From<PatternedPushRuleInit> for PushRule {
     }
 }
 
+impl From<AnyPushRule> for PushRule {
+    fn from(push_rule: AnyPushRule) -> Self {
+        // The catch-all is unreachable if the "ruma_unstable_exhaustive_types" cfg setting is
+        // enabled.
+        #[allow(unreachable_patterns)]
+        match push_rule {
+            AnyPushRule::Override(r) => r.into(),
+            AnyPushRule::Content(r) => r.into(),
+            AnyPushRule::Room(r) => r.into(),
+            AnyPushRule::Sender(r) => r.into(),
+            AnyPushRule::Underride(r) => r.into(),
+            _ => unreachable!(),
+        }
+    }
+}
+
+impl<'a> From<AnyPushRuleRef<'a>> for PushRule {
+    fn from(push_rule: AnyPushRuleRef<'a>) -> Self {
+        push_rule.to_owned().into()
+    }
+}
+
 impl<T> TryFrom<PushRule> for SimplePushRule<T>
 where
     T: TryFrom<String>,
@@ -126,7 +147,7 @@ where
 /// An error that happens when `PushRule` cannot
 /// be converted into `PatternedPushRule`
 #[derive(Debug)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct MissingPatternError;
 
 impl fmt::Display for MissingPatternError {
@@ -151,32 +172,18 @@ impl TryFrom<PushRule> for PatternedPushRule {
     }
 }
 
-/// An error that happens when `PushRule` cannot
-/// be converted into `ConditionalPushRule`
-#[derive(Debug)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
-pub struct MissingConditionsError;
+impl From<PushRule> for ConditionalPushRule {
+    fn from(push_rule: PushRule) -> Self {
+        let PushRule { actions, default, enabled, rule_id, conditions, .. } = push_rule;
 
-impl fmt::Display for MissingConditionsError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Push rule has no conditions.")
-    }
-}
-
-impl Error for MissingConditionsError {}
-
-impl TryFrom<PushRule> for ConditionalPushRule {
-    type Error = MissingConditionsError;
-
-    fn try_from(push_rule: PushRule) -> Result<Self, Self::Error> {
-        if let PushRule {
-            actions, default, enabled, rule_id, conditions: Some(conditions), ..
-        } = push_rule
-        {
-            Ok(ConditionalPushRuleInit { actions, default, enabled, rule_id, conditions }.into())
-        } else {
-            Err(MissingConditionsError)
+        ConditionalPushRuleInit {
+            actions,
+            default,
+            enabled,
+            rule_id,
+            conditions: conditions.unwrap_or_default(),
         }
+        .into()
     }
 }
 
@@ -199,7 +206,7 @@ pub enum PusherKind {
 /// To create an instance of this type, first create a `PusherInit` and convert it via
 /// `Pusher::from` / `.into()`.
 #[derive(Clone, Debug, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct Pusher {
     /// Identifiers for this pusher.
     #[serde(flatten)]
@@ -259,7 +266,7 @@ impl From<PusherInit> for Pusher {
 
 /// Strings to uniquely identify a `Pusher`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct PusherIds {
     /// A unique identifier for the pusher.
     ///
@@ -280,9 +287,13 @@ impl PusherIds {
 }
 
 /// Information for an email pusher.
-#[derive(Clone, Debug, Default)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
-pub struct EmailPusherData;
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
+#[serde(transparent, default)]
+pub struct EmailPusherData {
+    /// Custom data for the pusher.
+    pub data: JsonObject,
+}
 
 impl EmailPusherData {
     /// Creates a new empty `EmailPusherData`.
@@ -297,17 +308,4 @@ impl EmailPusherData {
 pub struct CustomPusherData {
     kind: String,
     data: JsonObject,
-}
-
-/// The scope of a push rule.
-#[doc = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/doc/string_enum.md"))]
-#[derive(Clone, PartialEq, Eq, StringEnum)]
-#[ruma_enum(rename_all = "lowercase")]
-#[non_exhaustive]
-pub enum RuleScope {
-    /// The global rules.
-    Global,
-
-    #[doc(hidden)]
-    _Custom(PrivOwnedStr),
 }

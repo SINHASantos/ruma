@@ -4,7 +4,7 @@ use std::fmt;
 
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, IdentFragment, ToTokens};
-use syn::{Attribute, Data, DataEnum, DeriveInput, Ident, LitStr, Path};
+use syn::{Attribute, Data, DataEnum, DeriveInput, Ident, LitStr};
 
 use super::event_parse::{EventEnumDecl, EventEnumEntry, EventKind};
 use crate::util::m_prefix_name_to_type_name;
@@ -24,7 +24,7 @@ type EventKindFn = fn(EventKind, EventEnumVariation) -> bool;
 
 /// This const is used to generate the accessor methods for the `Any*Event` enums.
 ///
-/// DO NOT alter the field names unless the structs in `ruma_common::events::event_kinds` have
+/// DO NOT alter the field names unless the structs in `ruma_events::event_kinds` have
 /// changed.
 const EVENT_FIELDS: &[(&str, EventKindFn)] = &[
     ("origin_server_ts", is_non_stripped_room_event),
@@ -43,7 +43,7 @@ const EVENT_FIELDS: &[(&str, EventKindFn)] = &[
 pub fn expand_event_enums(input: &EventEnumDecl) -> syn::Result<TokenStream> {
     use EventEnumVariation as V;
 
-    let ruma_common = crate::import_ruma_common();
+    let ruma_events = crate::import_ruma_events();
 
     let mut res = TokenStream::new();
 
@@ -56,17 +56,17 @@ pub fn expand_event_enums(input: &EventEnumDecl) -> syn::Result<TokenStream> {
     let events = &input.events;
     let docs = &docs;
     let variants = &variants;
-    let ruma_common = &ruma_common;
+    let ruma_events = &ruma_events;
 
-    res.extend(expand_content_enum(kind, events, docs, attrs, variants, ruma_common));
+    res.extend(expand_content_enum(kind, events, docs, attrs, variants, ruma_events));
     res.extend(
-        expand_event_enum(kind, V::None, events, docs, attrs, variants, ruma_common)
+        expand_event_enum(kind, V::None, events, docs, attrs, variants, ruma_events)
             .unwrap_or_else(syn::Error::into_compile_error),
     );
 
     if matches!(kind, EventKind::MessageLike | EventKind::State) {
         res.extend(
-            expand_event_enum(kind, V::Sync, events, docs, attrs, variants, ruma_common)
+            expand_event_enum(kind, V::Sync, events, docs, attrs, variants, ruma_events)
                 .unwrap_or_else(syn::Error::into_compile_error),
         );
         res.extend(
@@ -74,26 +74,26 @@ pub fn expand_event_enums(input: &EventEnumDecl) -> syn::Result<TokenStream> {
                 .unwrap_or_else(syn::Error::into_compile_error),
         );
         res.extend(
-            expand_into_full_event(kind, V::Sync, variants, ruma_common)
+            expand_into_full_event(kind, V::Sync, variants, ruma_events)
                 .unwrap_or_else(syn::Error::into_compile_error),
         );
     }
 
     if matches!(kind, EventKind::Ephemeral) {
         res.extend(
-            expand_event_enum(kind, V::Sync, events, docs, attrs, variants, ruma_common)
+            expand_event_enum(kind, V::Sync, events, docs, attrs, variants, ruma_events)
                 .unwrap_or_else(syn::Error::into_compile_error),
         );
     }
 
     if matches!(kind, EventKind::State) {
-        res.extend(expand_full_content_enum(kind, events, docs, attrs, variants, ruma_common));
+        res.extend(expand_full_content_enum(kind, events, docs, attrs, variants, ruma_events));
         res.extend(
-            expand_event_enum(kind, V::Stripped, events, docs, attrs, variants, ruma_common)
+            expand_event_enum(kind, V::Stripped, events, docs, attrs, variants, ruma_events)
                 .unwrap_or_else(syn::Error::into_compile_error),
         );
         res.extend(
-            expand_event_enum(kind, V::Initial, events, docs, attrs, variants, ruma_common)
+            expand_event_enum(kind, V::Initial, events, docs, attrs, variants, ruma_events)
                 .unwrap_or_else(syn::Error::into_compile_error),
         );
     }
@@ -108,42 +108,37 @@ fn expand_event_enum(
     docs: &[TokenStream],
     attrs: &[Attribute],
     variants: &[EventEnumVariant],
-    ruma_common: &TokenStream,
+    ruma_events: &TokenStream,
 ) -> syn::Result<TokenStream> {
     let event_struct = kind.to_event_ident(var.into())?;
     let ident = kind.to_event_enum_ident(var.into())?;
 
     let variant_decls = variants.iter().map(|v| v.decl());
-    let content: Vec<_> = events
-        .iter()
-        .map(|event| {
-            event
-                .stable_name()
-                .map(|stable_name| to_event_path(stable_name, &event.ev_path, kind, var))
-        })
-        .collect::<syn::Result<_>>()?;
+    let event_ty: Vec<_> = events.iter().map(|event| event.to_event_path(kind, var)).collect();
 
-    let custom_ty = format_ident!("Custom{}Content", kind);
+    let custom_content_ty = format_ident!("Custom{}Content", kind);
 
-    let deserialize_impl = expand_deserialize_impl(kind, var, events, ruma_common)?;
+    let deserialize_impl = expand_deserialize_impl(kind, var, events, ruma_events)?;
     let field_accessor_impl =
-        expand_accessor_methods(kind, var, variants, &event_struct, ruma_common)?;
-    let from_impl = expand_from_impl(&ident, &content, variants);
+        expand_accessor_methods(kind, var, variants, &event_struct, ruma_events)?;
+    let from_impl = expand_from_impl(&ident, &event_ty, variants);
 
     Ok(quote! {
         #( #attrs )*
         #[derive(Clone, Debug)]
         #[allow(clippy::large_enum_variant, unused_qualifications)]
-        #[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+        #[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
         pub enum #ident {
             #(
                 #docs
-                #variant_decls(#content),
+                #variant_decls(#event_ty),
             )*
             /// An event not defined by the Matrix specification
             #[doc(hidden)]
             _Custom(
-                #ruma_common::events::#event_struct<#ruma_common::events::_custom::#custom_ty>,
+                #ruma_events::#event_struct<
+                    #ruma_events::_custom::#custom_content_ty
+                >,
             ),
         }
 
@@ -157,10 +152,11 @@ fn expand_deserialize_impl(
     kind: EventKind,
     var: EventEnumVariation,
     events: &[EventEnumEntry],
-    ruma_common: &TokenStream,
+    ruma_events: &TokenStream,
 ) -> syn::Result<TokenStream> {
-    let serde = quote! { #ruma_common::exports::serde };
-    let serde_json = quote! { #ruma_common::exports::serde_json };
+    let ruma_common = quote! { #ruma_events::exports::ruma_common };
+    let serde = quote! { #ruma_events::exports::serde };
+    let serde_json = quote! { #ruma_events::exports::serde_json };
 
     let ident = kind.to_event_enum_ident(var.into())?;
 
@@ -173,8 +169,18 @@ fn expand_deserialize_impl(
                 quote! { #(#attrs)* }
             };
             let self_variant = variant.ctor(quote! { Self });
-            let content = to_event_path(event.stable_name()?, &event.ev_path, kind, var);
-            let ev_types = event.aliases.iter().chain([&event.ev_type]);
+            let content = event.to_event_path(kind, var);
+            let ev_types = event.aliases.iter().chain([&event.ev_type]).map(|ev_type| {
+                if event.has_type_fragment() {
+                    let ev_type = ev_type.value();
+                    let prefix = ev_type
+                        .strip_suffix('*')
+                        .expect("event type with type fragment must end with *");
+                    quote! { t if t.starts_with(#prefix) }
+                } else {
+                    quote! { #ev_type }
+                }
+            });
 
             Ok(quote! {
                 #variant_attrs #(#ev_types)|* => {
@@ -196,7 +202,7 @@ fn expand_deserialize_impl(
                 use #serde::de::Error as _;
 
                 let json = Box::<#serde_json::value::RawValue>::deserialize(deserializer)?;
-                let #ruma_common::events::EventTypeDeHelper { ev_type, .. } =
+                let #ruma_events::EventTypeDeHelper { ev_type, .. } =
                     #ruma_common::serde::from_raw_json_value(&json)?;
 
                 match &*ev_type {
@@ -213,10 +219,10 @@ fn expand_deserialize_impl(
 
 fn expand_from_impl(
     ty: &Ident,
-    content: &[TokenStream],
+    event_ty: &[TokenStream],
     variants: &[EventEnumVariant],
 ) -> TokenStream {
-    let from_impls = content.iter().zip(variants).map(|(content, variant)| {
+    let from_impls = event_ty.iter().zip(variants).map(|(event_ty, variant)| {
         let ident = &variant.ident;
         let attrs = &variant.attrs;
 
@@ -224,8 +230,8 @@ fn expand_from_impl(
             #[allow(unused_qualifications)]
             #[automatically_derived]
             #(#attrs)*
-            impl ::std::convert::From<#content> for #ty {
-                fn from(c: #content) -> Self {
+            impl ::std::convert::From<#event_ty> for #ty {
+                fn from(c: #event_ty) -> Self {
                     Self::#ident(c)
                 }
             }
@@ -269,8 +275,10 @@ fn expand_into_full_event(
     kind: EventKind,
     var: EventEnumVariation,
     variants: &[EventEnumVariant],
-    ruma_common: &TokenStream,
+    ruma_events: &TokenStream,
 ) -> syn::Result<TokenStream> {
+    let ruma_common = quote! { #ruma_events::exports::ruma_common };
+
     let ident = kind.to_event_enum_ident(var.into())?;
     let full = kind.to_event_enum_ident(var.to_full().into())?;
 
@@ -304,21 +312,16 @@ fn expand_content_enum(
     docs: &[TokenStream],
     attrs: &[Attribute],
     variants: &[EventEnumVariant],
-    ruma_common: &TokenStream,
+    ruma_events: &TokenStream,
 ) -> syn::Result<TokenStream> {
-    let serde = quote! { #ruma_common::exports::serde };
+    let serde = quote! { #ruma_events::exports::serde };
 
     let ident = kind.to_content_enum();
 
     let event_type_enum = kind.to_event_type_enum();
 
-    let content: Vec<_> = events
-        .iter()
-        .map(|event| {
-            let stable_name = event.stable_name()?;
-            Ok(to_event_content_path(kind, stable_name, &event.ev_path, None))
-        })
-        .collect::<syn::Result<_>>()?;
+    let content: Vec<_> =
+        events.iter().map(|event| event.to_event_content_path(kind, None)).collect();
 
     let variant_decls = variants.iter().map(|v| v.decl()).collect::<Vec<_>>();
     let variant_arms = variants.iter().map(|v| v.match_arm(quote! { Self })).collect::<Vec<_>>();
@@ -333,14 +336,63 @@ fn expand_content_enum(
     let from_impl = expand_from_impl(&ident, &content, variants);
 
     let serialize_custom_event_error_path =
-        quote! { #ruma_common::events::serialize_custom_event_error }.to_string();
+        quote! { #ruma_events::serialize_custom_event_error }.to_string();
+
+    // Generate an `EventContentFromType` implementation.
+    let serde_json = quote! { #ruma_events::exports::serde_json };
+    let event_type_match_arms: TokenStream = events
+        .iter()
+        .map(|event| {
+            let variant = event.to_variant()?;
+            let variant_attrs = {
+                let attrs = &variant.attrs;
+                quote! { #(#attrs)* }
+            };
+            let self_variant = variant.ctor(quote! { Self });
+
+            let ev_types = event.aliases.iter().chain([&event.ev_type]).map(|ev_type| {
+                if event.has_type_fragment() {
+                    let ev_type = ev_type.value();
+                    let prefix = ev_type
+                        .strip_suffix('*')
+                        .expect("event type with type fragment must end with *");
+                    quote! { t if t.starts_with(#prefix) }
+                } else {
+                    quote! { #ev_type }
+                }
+            });
+
+            let deserialize_content = if event.has_type_fragment() {
+                // If the event has a type fragment, then it implements EventContentFromType itself;
+                // see `generate_event_content_impl` which does that. In this case, forward to its
+                // implementation.
+                let content_type = event.to_event_content_path(kind, None);
+                quote! {
+                    #content_type::from_parts(event_type, json)?
+                }
+            } else {
+                // The event doesn't have a type fragment, so it *should* implement Deserialize:
+                // use that here.
+                quote! {
+                    #serde_json::from_str(json.get())?
+                }
+            };
+
+            Ok(quote! {
+                #variant_attrs #(#ev_types)|* => {
+                    let content = #deserialize_content;
+                    Ok(#self_variant(content))
+                },
+            })
+        })
+        .collect::<syn::Result<_>>()?;
 
     Ok(quote! {
         #( #attrs )*
         #[derive(Clone, Debug, #serde::Serialize)]
         #[serde(untagged)]
         #[allow(clippy::large_enum_variant)]
-        #[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+        #[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
         pub enum #ident {
             #(
                 #docs
@@ -354,8 +406,8 @@ fn expand_content_enum(
         }
 
         #[automatically_derived]
-        impl #ruma_common::events::EventContent for #ident {
-            type EventType = #ruma_common::events::#event_type_enum;
+        impl #ruma_events::EventContent for #ident {
+            type EventType = #ruma_events::#event_type_enum;
 
             fn event_type(&self) -> Self::EventType {
                 match self {
@@ -366,7 +418,24 @@ fn expand_content_enum(
         }
 
         #[automatically_derived]
-        impl #ruma_common::events::#sub_trait_name for #ident {
+        impl #ruma_events::EventContentFromType for #ident {
+            fn from_parts(event_type: &str, json: &#serde_json::value::RawValue) -> serde_json::Result<Self> {
+                match event_type {
+                    #event_type_match_arms
+
+                    _ => {
+                        Ok(Self::_Custom {
+                            event_type: crate::PrivOwnedStr(
+                                ::std::convert::From::from(event_type.to_owned())
+                            )
+                        })
+                    }
+                }
+            }
+        }
+
+        #[automatically_derived]
+        impl #ruma_events::#sub_trait_name for #ident {
             #state_event_content_impl
         }
 
@@ -381,19 +450,14 @@ fn expand_full_content_enum(
     docs: &[TokenStream],
     attrs: &[Attribute],
     variants: &[EventEnumVariant],
-    ruma_common: &TokenStream,
+    ruma_events: &TokenStream,
 ) -> syn::Result<TokenStream> {
     let ident = kind.to_full_content_enum();
 
     let event_type_enum = kind.to_event_type_enum();
 
-    let content: Vec<_> = events
-        .iter()
-        .map(|event| {
-            let stable_name = event.stable_name()?;
-            Ok(to_event_content_path(kind, stable_name, &event.ev_path, None))
-        })
-        .collect::<syn::Result<_>>()?;
+    let content: Vec<_> =
+        events.iter().map(|event| event.to_event_content_path(kind, None)).collect();
 
     let variant_decls = variants.iter().map(|v| v.decl()).collect::<Vec<_>>();
     let variant_arms = variants.iter().map(|v| v.match_arm(quote! { Self })).collect::<Vec<_>>();
@@ -402,11 +466,11 @@ fn expand_full_content_enum(
         #( #attrs )*
         #[derive(Clone, Debug)]
         #[allow(clippy::large_enum_variant)]
-        #[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+        #[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
         pub enum #ident {
             #(
                 #docs
-                #variant_decls(#ruma_common::events::FullStateEventContent<#content>),
+                #variant_decls(#ruma_events::FullStateEventContent<#content>),
             )*
             #[doc(hidden)]
             _Custom {
@@ -417,7 +481,7 @@ fn expand_full_content_enum(
 
         impl #ident {
             /// Get the event’s type, like `m.room.create`.
-            pub fn event_type(&self) -> #ruma_common::events::#event_type_enum {
+            pub fn event_type(&self) -> #ruma_events::#event_type_enum {
                 match self {
                     #( #variant_arms(content) => content.event_type(), )*
                     Self::_Custom { event_type, .. } => ::std::convert::From::from(&event_type.0[..]),
@@ -432,8 +496,10 @@ fn expand_accessor_methods(
     var: EventEnumVariation,
     variants: &[EventEnumVariant],
     event_struct: &Ident,
-    ruma_common: &TokenStream,
+    ruma_events: &TokenStream,
 ) -> syn::Result<TokenStream> {
+    let ruma_common = quote! { #ruma_events::exports::ruma_common };
+
     let ident = kind.to_event_enum_ident(var.into())?;
     let event_type_enum = format_ident!("{}Type", kind);
     let self_variants: Vec<_> = variants.iter().map(|v| v.match_arm(quote! { Self })).collect();
@@ -449,9 +515,9 @@ fn expand_accessor_methods(
     } else {
         quote! {
             #( #self_variants(event) =>
-                #ruma_common::events::EventContent::event_type(&event.content), )*
+                #ruma_events::EventContent::event_type(&event.content), )*
             Self::_Custom(event) => ::std::convert::From::from(
-                #ruma_common::events::EventContent::event_type(&event.content),
+                #ruma_events::EventContent::event_type(&event.content),
             ),
         }
     };
@@ -473,7 +539,7 @@ fn expand_accessor_methods(
                             event_type: crate::PrivOwnedStr(
                                 ::std::convert::From::from(
                                     ::std::string::ToString::to_string(
-                                        &#ruma_common::events::EventContent::event_type(
+                                        &#ruma_events::EventContent::event_type(
                                             &ev.content,
                                         ),
                                     ),
@@ -481,6 +547,18 @@ fn expand_accessor_methods(
                             ),
                         }
                     }),
+                }
+            }
+
+            /// Returns whether this event is redacted.
+            pub fn is_redacted(&self) -> bool {
+                match self {
+                    #(
+                        #self_variants(event) => {
+                            event.as_original().is_none()
+                        }
+                    )*
+                    Self::_Custom(event) => event.as_original().is_none(),
                 }
             }
         };
@@ -498,25 +576,25 @@ fn expand_accessor_methods(
                     match self {
                         #(
                             #self_variants(event) => match event {
-                                #ruma_common::events::#event_struct::Original(ev) => #full_content_variants(
-                                    #ruma_common::events::FullStateEventContent::Original {
+                                #ruma_events::#event_struct::Original(ev) => #full_content_variants(
+                                    #ruma_events::FullStateEventContent::Original {
                                         content: ev.content.clone(),
                                         prev_content: ev.unsigned.prev_content.clone()
                                     }
                                 ),
-                                #ruma_common::events::#event_struct::Redacted(ev) => #full_content_variants(
-                                    #ruma_common::events::FullStateEventContent::Redacted(
+                                #ruma_events::#event_struct::Redacted(ev) => #full_content_variants(
+                                    #ruma_events::FullStateEventContent::Redacted(
                                         ev.content.clone()
                                     )
                                 ),
                             }
                         )*
                         Self::_Custom(event) => match event {
-                            #ruma_common::events::#event_struct::Original(ev) => {
+                            #ruma_events::#event_struct::Original(ev) => {
                                 #full_content_enum::_Custom {
                                     event_type: crate::PrivOwnedStr(
                                         ::std::string::ToString::to_string(
-                                            &#ruma_common::events::EventContent::event_type(
+                                            &#ruma_events::EventContent::event_type(
                                                 &ev.content,
                                             ),
                                         ).into_boxed_str(),
@@ -524,11 +602,11 @@ fn expand_accessor_methods(
                                     redacted: false,
                                 }
                             }
-                            #ruma_common::events::#event_struct::Redacted(ev) => {
+                            #ruma_events::#event_struct::Redacted(ev) => {
                                 #full_content_enum::_Custom {
                                     event_type: crate::PrivOwnedStr(
                                         ::std::string::ToString::to_string(
-                                            &#ruma_common::events::EventContent::event_type(
+                                            &#ruma_events::EventContent::event_type(
                                                 &ev.content,
                                             ),
                                         ).into_boxed_str(),
@@ -556,7 +634,7 @@ fn expand_accessor_methods(
                         event_type: crate::PrivOwnedStr(
                             ::std::convert::From::from(
                                 ::std::string::ToString::to_string(
-                                    &#ruma_common::events::EventContent::event_type(&event.content)
+                                    &#ruma_events::EventContent::event_type(&event.content)
                                 )
                             ),
                         ),
@@ -570,7 +648,7 @@ fn expand_accessor_methods(
         has_field(kind, var).then(|| {
             let docs = format!("Returns this event's `{name}` field.");
             let ident = Ident::new(name, Span::call_site());
-            let field_type = field_return_type(name, ruma_common);
+            let field_type = field_return_type(name, ruma_events);
             let variants = variants.iter().map(|v| v.match_arm(quote! { Self }));
             let call_parens = maybe_redacted.then(|| quote! { () });
             let ampersand = (*name != "origin_server_ts").then(|| quote! { & });
@@ -602,9 +680,36 @@ fn expand_accessor_methods(
         }
     });
 
+    let relations_accessor = (kind == EventKind::MessageLike).then(|| {
+        let variants = variants.iter().map(|v| v.match_arm(quote! { Self }));
+
+        quote! {
+            /// Returns this event's `relations` from inside `unsigned`.
+            pub fn relations(
+                &self,
+            ) -> #ruma_events::BundledMessageLikeRelations<AnySyncMessageLikeEvent> {
+                match self {
+                    #(
+                        #variants(event) => event.as_original().map_or_else(
+                            ::std::default::Default::default,
+                            |ev| ev.unsigned.relations.clone().map_replace(|r| {
+                                ::std::convert::From::from(r.into_maybe_redacted())
+                            }),
+                        ),
+                    )*
+                    Self::_Custom(event) => event.as_original().map_or_else(
+                        ::std::default::Default::default,
+                        |ev| ev.unsigned.relations.clone().map_replace(|r| {
+                            AnySyncMessageLikeEvent::_Custom(r.into_maybe_redacted())
+                        }),
+                    ),
+                }
+            }
+        }
+    });
+
     let maybe_redacted_accessors = maybe_redacted.then(|| {
         let variants = variants.iter().map(|v| v.match_arm(quote! { Self }));
-        let variants2 = variants.clone();
 
         quote! {
             /// Returns this event's `transaction_id` from inside `unsigned`, if there is one.
@@ -620,28 +725,6 @@ fn expand_accessor_methods(
                     }
                 }
             }
-
-            /// Returns this event's `relations` from inside `unsigned`.
-            pub fn relations(&self) -> &#ruma_common::events::BundledRelations {
-                static DEFAULT_BUNDLED_RELATIONS: #ruma_common::events::BundledRelations =
-                    #ruma_common::events::BundledRelations::new();
-                match self {
-                    #(
-                        #variants2(event) => {
-                            event.as_original().map_or_else(
-                                || &DEFAULT_BUNDLED_RELATIONS,
-                                |ev| &ev.unsigned.relations,
-                            )
-                        }
-                    )*
-                    Self::_Custom(event) => {
-                        event.as_original().map_or_else(
-                            || &DEFAULT_BUNDLED_RELATIONS,
-                            |ev| &ev.unsigned.relations,
-                        )
-                    }
-                }
-            }
         }
     });
 
@@ -649,54 +732,21 @@ fn expand_accessor_methods(
         #[automatically_derived]
         impl #ident {
             /// Returns the `type` of this event.
-            pub fn event_type(&self) -> #ruma_common::events::#event_type_enum {
+            pub fn event_type(&self) -> #ruma_events::#event_type_enum {
                 match self { #event_type_match_arms }
             }
 
             #content_accessor
             #( #methods )*
+            #relations_accessor
             #state_key_accessor
             #maybe_redacted_accessors
         }
     })
 }
 
-fn to_event_path(
-    name: &LitStr,
-    path: &Path,
-    kind: EventKind,
-    var: EventEnumVariation,
-) -> TokenStream {
-    let event = m_prefix_name_to_type_name(name).unwrap();
-    let event_name = if kind == EventKind::ToDevice {
-        assert_eq!(var, EventEnumVariation::None);
-        format_ident!("ToDevice{}Event", event)
-    } else {
-        format_ident!("{}{}Event", var, event)
-    };
-    quote! { #path::#event_name }
-}
-
-fn to_event_content_path(
-    kind: EventKind,
-    name: &LitStr,
-    path: &Path,
-    prefix: Option<&str>,
-) -> TokenStream {
-    let event = m_prefix_name_to_type_name(name).unwrap();
-    let content_str = match kind {
-        EventKind::ToDevice => {
-            format_ident!("ToDevice{}{}EventContent", prefix.unwrap_or(""), event)
-        }
-        _ => format_ident!("{}{}EventContent", prefix.unwrap_or(""), event),
-    };
-
-    quote! {
-        #path::#content_str
-    }
-}
-
-fn field_return_type(name: &str, ruma_common: &TokenStream) -> TokenStream {
+fn field_return_type(name: &str, ruma_events: &TokenStream) -> TokenStream {
+    let ruma_common = quote! { #ruma_events::exports::ruma_common };
     match name {
         "origin_server_ts" => quote! { #ruma_common::MilliSecondsSinceUnixEpoch },
         "room_id" => quote! { &#ruma_common::RoomId },
@@ -750,7 +800,7 @@ impl EventEnumEntry {
 
     pub(crate) fn to_variant(&self) -> syn::Result<EventEnumVariant> {
         let attrs = self.attrs.clone();
-        let ident = m_prefix_name_to_type_name(self.stable_name()?)?;
+        let ident = self.ident()?;
 
         Ok(EventEnumVariant { attrs, ident })
     }
@@ -764,7 +814,8 @@ impl EventEnumEntry {
                     Span::call_site(),
                     format!(
                         "A matrix event must declare a well-known type that starts with `m.` \
-                        either as the main type or as an alias, found `{}`",
+                        either as the main type or as an alias, or must declare the ident that \
+                        should be used if it is only an unstable type, found main type `{}`",
                         self.ev_type.value()
                     ),
                 )
@@ -772,14 +823,49 @@ impl EventEnumEntry {
         }
     }
 
-    pub(crate) fn docs(&self) -> syn::Result<TokenStream> {
-        let stable_name = self.stable_name()?;
+    pub(crate) fn ident(&self) -> syn::Result<Ident> {
+        if let Some(ident) = self.ident.clone() {
+            Ok(ident)
+        } else {
+            m_prefix_name_to_type_name(self.stable_name()?)
+        }
+    }
 
-        let mut doc = quote! {
-            #[doc = #stable_name]
+    fn to_event_path(&self, kind: EventKind, var: EventEnumVariation) -> TokenStream {
+        let path = &self.ev_path;
+        let ident = self.ident().unwrap();
+        let event_name = if kind == EventKind::ToDevice {
+            assert_eq!(var, EventEnumVariation::None);
+            format_ident!("ToDevice{ident}Event")
+        } else {
+            format_ident!("{}{ident}Event", var)
+        };
+        quote! { #path::#event_name }
+    }
+
+    fn to_event_content_path(&self, kind: EventKind, prefix: Option<&str>) -> TokenStream {
+        let path = &self.ev_path;
+        let ident = self.ident().unwrap();
+        let content_str = match kind {
+            EventKind::ToDevice => {
+                format_ident!("ToDevice{}{ident}EventContent", prefix.unwrap_or(""))
+            }
+            _ => format_ident!("{}{ident}EventContent", prefix.unwrap_or("")),
         };
 
-        if self.ev_type != *stable_name {
+        quote! {
+            #path::#content_str
+        }
+    }
+
+    pub(crate) fn docs(&self) -> syn::Result<TokenStream> {
+        let main_name = self.stable_name().unwrap_or(&self.ev_type);
+
+        let mut doc = quote! {
+            #[doc = #main_name]
+        };
+
+        if self.ev_type != *main_name {
             let unstable_name =
                 format!("This variant uses the unstable type `{}`.", self.ev_type.value());
 
@@ -860,7 +946,7 @@ pub enum EventEnumVariation {
     Initial,
 }
 
-impl From<EventEnumVariation> for crate::events::event_parse::EventKindVariation {
+impl From<EventEnumVariation> for super::event_parse::EventKindVariation {
     fn from(v: EventEnumVariation) -> Self {
         match v {
             EventEnumVariation::None => Self::None,

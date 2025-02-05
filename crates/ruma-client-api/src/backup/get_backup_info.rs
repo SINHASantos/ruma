@@ -2,6 +2,7 @@
 //!
 //! Get information about a specific backup.
 
+#[allow(unreachable_pub)] // https://github.com/rust-lang/rust/issues/112615
 pub mod v3 {
     //! `/v3/` ([spec])
     //!
@@ -64,7 +65,7 @@ pub mod v3 {
     }
 
     impl Response {
-        /// Creates a new `Response` with the gien algorithm, key count, etag and version.
+        /// Creates a new `Response` with the given algorithm, key count, etag and version.
         pub fn new(
             algorithm: Raw<BackupAlgorithm>,
             count: UInt,

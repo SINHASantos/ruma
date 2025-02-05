@@ -1,28 +1,31 @@
 use std::{collections::BTreeMap, ops::RangeBounds, str::FromStr};
 
 use js_int::{Int, UInt};
-use regex::Regex;
+use regex::bytes::Regex;
 #[cfg(feature = "unstable-msc3931")]
 use ruma_macros::StringEnum;
 use serde::{Deserialize, Serialize};
-use serde_json::{to_value as to_json_value, value::Value as JsonValue};
-use tracing::{instrument, warn};
+use serde_json::value::Value as JsonValue;
 use wildmatch::WildMatch;
 
-use crate::{power_levels::NotificationPowerLevels, serde::Raw, OwnedRoomId, OwnedUserId, UserId};
+use crate::{power_levels::NotificationPowerLevels, OwnedRoomId, OwnedUserId, UserId};
 #[cfg(feature = "unstable-msc3931")]
 use crate::{PrivOwnedStr, RoomVersionId};
 
+mod flattened_json;
 mod push_condition_serde;
 mod room_member_count_is;
 
-pub use room_member_count_is::{ComparisonOperator, RoomMemberCountIs};
+pub use self::{
+    flattened_json::{FlattenedJson, FlattenedJsonValue, ScalarJsonValue},
+    room_member_count_is::{ComparisonOperator, RoomMemberCountIs},
+};
 
 /// Features supported by room versions.
 #[cfg(feature = "unstable-msc3931")]
 #[doc = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/doc/string_enum.md"))]
 #[derive(Clone, PartialEq, Eq, StringEnum)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub enum RoomVersionFeature {
     /// m.extensible_events
     ///
@@ -52,6 +55,7 @@ impl RoomVersionFeature {
             | RoomVersionId::V8
             | RoomVersionId::V9
             | RoomVersionId::V10
+            | RoomVersionId::V11
             | RoomVersionId::_Custom(_) => vec![],
         }
     }
@@ -59,11 +63,13 @@ impl RoomVersionFeature {
 
 /// A condition that must apply for an associated push rule's action to be taken.
 #[derive(Clone, Debug)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub enum PushCondition {
     /// A glob pattern match on a field of the event.
     EventMatch {
-        /// The dot-separated field of the event to match.
+        /// The [dot-separated path] of the property of the event to match.
+        ///
+        /// [dot-separated path]: https://spec.matrix.org/latest/appendices/#dot-separated-property-paths
         key: String,
 
         /// The glob-style pattern to match against.
@@ -100,6 +106,28 @@ pub enum PushCondition {
         feature: RoomVersionFeature,
     },
 
+    /// Exact value match on a property of the event.
+    EventPropertyIs {
+        /// The [dot-separated path] of the property of the event to match.
+        ///
+        /// [dot-separated path]: https://spec.matrix.org/latest/appendices/#dot-separated-property-paths
+        key: String,
+
+        /// The value to match against.
+        value: ScalarJsonValue,
+    },
+
+    /// Exact value match on a value in an array property of the event.
+    EventPropertyContains {
+        /// The [dot-separated path] of the property of the event to match.
+        ///
+        /// [dot-separated path]: https://spec.matrix.org/latest/appendices/#dot-separated-property-paths
+        key: String,
+
+        /// The value to match against.
+        value: ScalarJsonValue,
+    },
+
     #[doc(hidden)]
     _Custom(_CustomPushCondition),
 }
@@ -112,7 +140,7 @@ pub(super) fn check_event_match(
 ) -> bool {
     let value = match key {
         "room_id" => context.room_id.as_str(),
-        _ => match event.get(key) {
+        _ => match event.get_str(key) {
             Some(v) => v,
             None => return false,
         },
@@ -127,16 +155,17 @@ impl PushCondition {
     /// # Arguments
     ///
     /// * `event` - The flattened JSON representation of a room message event.
-    /// * `context` - The context of the room at the time of the event.
+    /// * `context` - The context of the room at the time of the event. If the power levels context
+    ///   is missing from it, conditions that depend on it will never apply.
     pub fn applies(&self, event: &FlattenedJson, context: &PushConditionRoomCtx) -> bool {
-        if event.get("sender").map_or(false, |sender| sender == context.user_id) {
+        if event.get_str("sender").is_some_and(|sender| sender == context.user_id) {
             return false;
         }
 
         match self {
             Self::EventMatch { key, pattern } => check_event_match(event, key, pattern, context),
             Self::ContainsDisplayName => {
-                let value = match event.get("content.body") {
+                let value = match event.get_str("content.body") {
                     Some(v) => v,
                     None => return false,
                 };
@@ -145,7 +174,11 @@ impl PushCondition {
             }
             Self::RoomMemberCount { is } => is.contains(&context.member_count),
             Self::SenderNotificationPermission { key } => {
-                let sender_id = match event.get("sender") {
+                let Some(power_levels) = &context.power_levels else {
+                    return false;
+                };
+
+                let sender_id = match event.get_str("sender") {
                     Some(v) => match <&UserId>::try_from(v) {
                         Ok(u) => u,
                         Err(_) => return false,
@@ -153,12 +186,10 @@ impl PushCondition {
                     None => return false,
                 };
 
-                let sender_level = context
-                    .users_power_levels
-                    .get(sender_id)
-                    .unwrap_or(&context.default_power_level);
+                let sender_level =
+                    power_levels.users.get(sender_id).unwrap_or(&power_levels.users_default);
 
-                match context.notification_power_levels.get(key) {
+                match power_levels.notifications.get(key) {
                     Some(l) => sender_level >= l,
                     None => false,
                 }
@@ -170,6 +201,11 @@ impl PushCondition {
                 }
                 RoomVersionFeature::_Custom(_) => false,
             },
+            Self::EventPropertyIs { key, value } => event.get(key).is_some_and(|v| v == value),
+            Self::EventPropertyContains { key, value } => event
+                .get(key)
+                .and_then(FlattenedJsonValue::as_array)
+                .is_some_and(|a| a.contains(value)),
             Self::_Custom(_) => false,
         }
     }
@@ -198,24 +234,34 @@ pub struct PushConditionRoomCtx {
     /// The number of members in the room.
     pub member_count: UInt,
 
-    /// The users matrix ID.
+    /// The user's matrix ID.
     pub user_id: OwnedUserId,
 
     /// The display name of the current user in the room.
     pub user_display_name: String,
 
+    /// The room power levels context for the room.
+    ///
+    /// If this is missing, push rules that require this will never match.
+    pub power_levels: Option<PushConditionPowerLevelsCtx>,
+
+    /// The list of features this room's version or the room itself supports.
+    #[cfg(feature = "unstable-msc3931")]
+    pub supported_features: Vec<RoomVersionFeature>,
+}
+
+/// The room power levels context to be able to test the corresponding push conditions.
+#[derive(Clone, Debug)]
+#[allow(clippy::exhaustive_structs)]
+pub struct PushConditionPowerLevelsCtx {
     /// The power levels of the users of the room.
-    pub users_power_levels: BTreeMap<OwnedUserId, Int>,
+    pub users: BTreeMap<OwnedUserId, Int>,
 
     /// The default power level of the users of the room.
-    pub default_power_level: Int,
+    pub users_default: Int,
 
     /// The notification power levels of the room.
-    pub notification_power_levels: NotificationPowerLevels,
-
-    #[cfg(feature = "unstable-msc3931")]
-    /// The list of features this room's version or the room itself supports.
-    pub supported_features: Vec<RoomVersionFeature>,
+    pub notifications: NotificationPowerLevels,
 }
 
 /// Additional functions for character matching.
@@ -318,7 +364,7 @@ impl StrExt for str {
             return false;
         }
 
-        let has_wildcards = pattern.contains(|c| matches!(c, '?' | '*'));
+        let has_wildcards = pattern.contains(['?', '*']);
 
         if has_wildcards {
             let mut chunks: Vec<String> = vec![];
@@ -353,7 +399,8 @@ impl StrExt for str {
             // The word characters in ASCII compatible mode (with the `-u` flag) match the
             // definition in the spec: any character not in the set `[A-Za-z0-9_]`.
             let regex = format!(r"(?-u:^|\W|\b){}(?-u:\b|\W|$)", chunks.concat());
-            Regex::new(&regex).ok().filter(|re| re.is_match(self)).is_some()
+            let re = Regex::new(&regex).expect("regex construction should succeed");
+            re.is_match(self.as_bytes())
         } else {
             match self.find(pattern) {
                 Some(start) => {
@@ -361,7 +408,7 @@ impl StrExt for str {
 
                     // Look if the match has word boundaries.
                     let word_boundary_start = !self.char_at(start).is_word_char()
-                        || self.find_prev_char(start).map_or(true, |c| !c.is_word_char());
+                        || !self.find_prev_char(start).is_some_and(|c| c.is_word_char());
 
                     if word_boundary_start {
                         let word_boundary_end = end == self.len()
@@ -407,59 +454,24 @@ impl StrExt for str {
     }
 }
 
-/// The flattened representation of a JSON object.
-#[derive(Clone, Debug)]
-pub struct FlattenedJson {
-    /// The internal map containing the flattened JSON as a pair path, value.
-    map: BTreeMap<String, String>,
-}
-
-impl FlattenedJson {
-    /// Create a `FlattenedJson` from `Raw`.
-    pub fn from_raw<T>(raw: &Raw<T>) -> Self {
-        let mut s = Self { map: BTreeMap::new() };
-        s.flatten_value(to_json_value(raw).unwrap(), "".into());
-        s
-    }
-
-    /// Flatten and insert the `value` at `path`.
-    #[instrument(skip(self, value))]
-    fn flatten_value(&mut self, value: JsonValue, path: String) {
-        match value {
-            JsonValue::Object(fields) => {
-                for (key, value) in fields {
-                    let path = if path.is_empty() { key } else { format!("{path}.{key}") };
-                    self.flatten_value(value, path);
-                }
-            }
-            JsonValue::String(s) => {
-                if self.map.insert(path.clone(), s).is_some() {
-                    warn!("Duplicate path in flattened JSON: {path}");
-                }
-            }
-            JsonValue::Number(_) | JsonValue::Bool(_) | JsonValue::Array(_) | JsonValue::Null => {}
-        }
-    }
-
-    /// Value associated with the given `path`.
-    pub fn get(&self, path: &str) -> Option<&str> {
-        self.map.get(path).map(|s| s.as_str())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
 
-    use assert_matches::assert_matches;
+    use assert_matches2::assert_matches;
     use js_int::{int, uint};
-    use maplit::btreemap;
     use serde_json::{
         from_value as from_json_value, json, to_value as to_json_value, Value as JsonValue,
     };
 
-    use super::{FlattenedJson, PushCondition, PushConditionRoomCtx, RoomMemberCountIs, StrExt};
-    use crate::{power_levels::NotificationPowerLevels, room_id, serde::Raw, user_id};
+    use super::{
+        FlattenedJson, PushCondition, PushConditionPowerLevelsCtx, PushConditionRoomCtx,
+        RoomMemberCountIs, StrExt,
+    };
+    use crate::{
+        owned_room_id, owned_user_id, power_levels::NotificationPowerLevels, serde::Raw,
+        OwnedUserId,
+    };
 
     #[test]
     fn serialize_event_match_condition() {
@@ -519,9 +531,9 @@ mod tests {
             "kind": "event_match",
             "pattern": "m.notice"
         });
-        let (key, pattern) = assert_matches!(
+        assert_matches!(
             from_json_value::<PushCondition>(json_data).unwrap(),
-            PushCondition::EventMatch { key, pattern } => (key, pattern)
+            PushCondition::EventMatch { key, pattern }
         );
         assert_eq!(key, "content.msgtype");
         assert_eq!(pattern, "m.notice");
@@ -541,9 +553,9 @@ mod tests {
             "is": "2",
             "kind": "room_member_count"
         });
-        let is = assert_matches!(
+        assert_matches!(
             from_json_value::<PushCondition>(json_data).unwrap(),
-            PushCondition::RoomMemberCount { is } => is
+            PushCondition::RoomMemberCount { is }
         );
         assert_eq!(is, RoomMemberCountIs::from(uint!(2)));
     }
@@ -554,9 +566,9 @@ mod tests {
             "key": "room",
             "kind": "sender_notification_permission"
         });
-        let key = assert_matches!(
+        assert_matches!(
             from_json_value::<PushCondition>(json_data).unwrap(),
-            PushCondition::SenderNotificationPermission { key } => key
+            PushCondition::SenderNotificationPermission { key }
         );
         assert_eq!(key, "room");
     }
@@ -590,7 +602,7 @@ mod tests {
         assert!(!"m".matches_word("[[:alpha:]]?"));
         assert!("[[:alpha:]]!".matches_word("[[:alpha:]]?"));
 
-        // From the spec: <https://spec.matrix.org/v1.6/client-server-api/#conditions-1>
+        // From the spec: <https://spec.matrix.org/v1.13/client-server-api/#conditions-1>
         assert!("An example event.".matches_word("ex*ple"));
         assert!("exple".matches_word("ex*ple"));
         assert!("An exciting triple-whammy".matches_word("ex*ple"));
@@ -639,33 +651,40 @@ mod tests {
         assert!("".matches_pattern("*", false));
         assert!(!"foo".matches_pattern("", false));
 
-        // From the spec: <https://spec.matrix.org/v1.6/client-server-api/#conditions-1>
+        // From the spec: <https://spec.matrix.org/v1.13/client-server-api/#conditions-1>
         assert!("Lunch plans".matches_pattern("lunc?*", false));
         assert!("LUNCH".matches_pattern("lunc?*", false));
         assert!(!" lunch".matches_pattern("lunc?*", false));
         assert!(!"lunc".matches_pattern("lunc?*", false));
     }
 
-    #[test]
-    fn conditions_apply_to_events() {
-        let first_sender = user_id!("@worthy_whale:server.name").to_owned();
+    fn sender() -> OwnedUserId {
+        owned_user_id!("@worthy_whale:server.name")
+    }
 
-        let mut users_power_levels = BTreeMap::new();
-        users_power_levels.insert(first_sender, int!(25));
+    fn push_context() -> PushConditionRoomCtx {
+        let mut users = BTreeMap::new();
+        users.insert(sender(), int!(25));
 
-        let context = PushConditionRoomCtx {
-            room_id: room_id!("!room:server.name").to_owned(),
-            member_count: uint!(3),
-            user_id: user_id!("@gorilla:server.name").to_owned(),
-            user_display_name: "Groovy Gorilla".into(),
-            users_power_levels,
-            default_power_level: int!(50),
-            notification_power_levels: NotificationPowerLevels { room: int!(50) },
-            #[cfg(feature = "unstable-msc3931")]
-            supported_features: Default::default(),
+        let power_levels = PushConditionPowerLevelsCtx {
+            users,
+            users_default: int!(50),
+            notifications: NotificationPowerLevels { room: int!(50) },
         };
 
-        let first_event_raw = serde_json::from_str::<Raw<JsonValue>>(
+        PushConditionRoomCtx {
+            room_id: owned_room_id!("!room:server.name"),
+            member_count: uint!(3),
+            user_id: owned_user_id!("@gorilla:server.name"),
+            user_display_name: "Groovy Gorilla".into(),
+            power_levels: Some(power_levels),
+            #[cfg(feature = "unstable-msc3931")]
+            supported_features: Default::default(),
+        }
+    }
+
+    fn first_flattened_event() -> FlattenedJson {
+        let raw = serde_json::from_str::<Raw<JsonValue>>(
             r#"{
                 "sender": "@worthy_whale:server.name",
                 "content": {
@@ -675,19 +694,30 @@ mod tests {
             }"#,
         )
         .unwrap();
-        let first_event = FlattenedJson::from_raw(&first_event_raw);
 
-        let second_event_raw = serde_json::from_str::<Raw<JsonValue>>(
+        FlattenedJson::from_raw(&raw)
+    }
+
+    fn second_flattened_event() -> FlattenedJson {
+        let raw = serde_json::from_str::<Raw<JsonValue>>(
             r#"{
                 "sender": "@party_bot:server.name",
                 "content": {
                     "msgtype": "m.notice",
-                    "body": "@room Ready to come to the party?"
+                    "body": "Everybody come to party!"
                 }
             }"#,
         )
         .unwrap();
-        let second_event = FlattenedJson::from_raw(&second_event_raw);
+
+        FlattenedJson::from_raw(&raw)
+    }
+
+    #[test]
+    fn event_match_applies() {
+        let context = push_context();
+        let first_event = first_flattened_event();
+        let second_event = second_flattened_event();
 
         let correct_room = PushCondition::EventMatch {
             key: "room_id".into(),
@@ -712,6 +742,12 @@ mod tests {
 
         assert!(!msgtype.applies(&first_event, &context));
         assert!(msgtype.applies(&second_event, &context));
+    }
+
+    #[test]
+    fn room_member_count_is_applies() {
+        let context = push_context();
+        let event = first_flattened_event();
 
         let member_count_eq =
             PushCondition::RoomMemberCount { is: RoomMemberCountIs::from(uint!(3)) };
@@ -720,14 +756,28 @@ mod tests {
         let member_count_lt =
             PushCondition::RoomMemberCount { is: RoomMemberCountIs::from(..uint!(3)) };
 
-        assert!(member_count_eq.applies(&first_event, &context));
-        assert!(member_count_gt.applies(&first_event, &context));
-        assert!(!member_count_lt.applies(&first_event, &context));
+        assert!(member_count_eq.applies(&event, &context));
+        assert!(member_count_gt.applies(&event, &context));
+        assert!(!member_count_lt.applies(&event, &context));
+    }
+
+    #[test]
+    fn contains_display_name_applies() {
+        let context = push_context();
+        let first_event = first_flattened_event();
+        let second_event = second_flattened_event();
 
         let contains_display_name = PushCondition::ContainsDisplayName;
 
         assert!(contains_display_name.applies(&first_event, &context));
         assert!(!contains_display_name.applies(&second_event, &context));
+    }
+
+    #[test]
+    fn sender_notification_permission_applies() {
+        let context = push_context();
+        let first_event = first_flattened_event();
+        let second_event = second_flattened_event();
 
         let sender_notification_permission =
             PushCondition::SenderNotificationPermission { key: "room".into() };
@@ -738,32 +788,16 @@ mod tests {
 
     #[cfg(feature = "unstable-msc3932")]
     #[test]
-    fn conditions_apply_to_events_in_room_with_feature() {
-        let first_sender = user_id!("@worthy_whale:server.name").to_owned();
-
-        let mut users_power_levels = BTreeMap::new();
-        users_power_levels.insert(first_sender, int!(25));
+    fn room_version_supports_applies() {
+        let context_not_matching = push_context();
 
         let context_matching = PushConditionRoomCtx {
-            room_id: room_id!("!room:server.name").to_owned(),
+            room_id: owned_room_id!("!room:server.name"),
             member_count: uint!(3),
-            user_id: user_id!("@gorilla:server.name").to_owned(),
+            user_id: owned_user_id!("@gorilla:server.name"),
             user_display_name: "Groovy Gorilla".into(),
-            users_power_levels: users_power_levels.clone(),
-            default_power_level: int!(50),
-            notification_power_levels: NotificationPowerLevels { room: int!(50) },
+            power_levels: context_not_matching.power_levels.clone(),
             supported_features: vec![super::RoomVersionFeature::ExtensibleEvents],
-        };
-
-        let context_not_matching = PushConditionRoomCtx {
-            room_id: room_id!("!room:server.name").to_owned(),
-            member_count: uint!(3),
-            user_id: user_id!("@gorilla:server.name").to_owned(),
-            user_display_name: "Groovy Gorilla".into(),
-            users_power_levels,
-            default_power_level: int!(50),
-            notification_power_levels: NotificationPowerLevels { room: int!(50) },
-            supported_features: vec![],
         };
 
         let simple_event_raw = serde_json::from_str::<Raw<JsonValue>>(
@@ -787,45 +821,130 @@ mod tests {
     }
 
     #[test]
-    fn flattened_json_values() {
-        let raw = serde_json::from_str::<Raw<JsonValue>>(
-            r#"{
-                "string": "Hello World",
-                "number": 10,
-                "array": [1, 2],
-                "boolean": true,
-                "null": null
-            }"#,
-        )
-        .unwrap();
+    fn event_property_is_applies() {
+        use crate::push::condition::ScalarJsonValue;
 
-        let flattened = FlattenedJson::from_raw(&raw);
-        assert_eq!(flattened.map, btreemap! { "string".into() => "Hello World".into() });
-    }
-
-    #[test]
-    fn flattened_json_nested() {
-        let raw = serde_json::from_str::<Raw<JsonValue>>(
+        let context = push_context();
+        let event_raw = serde_json::from_str::<Raw<JsonValue>>(
             r#"{
-                "desc": "Level 0",
-                "up": {
-                    "desc": "Level 1",
-                    "up": {
-                        "desc": "Level 2"
-                    }
+                "sender": "@worthy_whale:server.name",
+                "content": {
+                    "msgtype": "m.text",
+                    "body": "Boom!",
+                    "org.fake.boolean": false,
+                    "org.fake.number": 13,
+                    "org.fake.null": null
                 }
             }"#,
         )
         .unwrap();
+        let event = FlattenedJson::from_raw(&event_raw);
 
-        let flattened = FlattenedJson::from_raw(&raw);
-        assert_eq!(
-            flattened.map,
-            btreemap! {
-                "desc".into() => "Level 0".into(),
-                "up.desc".into() => "Level 1".into(),
-                "up.up.desc".into() => "Level 2".into(),
-            },
-        );
+        let string_match = PushCondition::EventPropertyIs {
+            key: "content.body".to_owned(),
+            value: "Boom!".into(),
+        };
+        assert!(string_match.applies(&event, &context));
+
+        let string_no_match =
+            PushCondition::EventPropertyIs { key: "content.body".to_owned(), value: "Boom".into() };
+        assert!(!string_no_match.applies(&event, &context));
+
+        let wrong_type =
+            PushCondition::EventPropertyIs { key: "content.body".to_owned(), value: false.into() };
+        assert!(!wrong_type.applies(&event, &context));
+
+        let bool_match = PushCondition::EventPropertyIs {
+            key: r"content.org\.fake\.boolean".to_owned(),
+            value: false.into(),
+        };
+        assert!(bool_match.applies(&event, &context));
+
+        let bool_no_match = PushCondition::EventPropertyIs {
+            key: r"content.org\.fake\.boolean".to_owned(),
+            value: true.into(),
+        };
+        assert!(!bool_no_match.applies(&event, &context));
+
+        let int_match = PushCondition::EventPropertyIs {
+            key: r"content.org\.fake\.number".to_owned(),
+            value: int!(13).into(),
+        };
+        assert!(int_match.applies(&event, &context));
+
+        let int_no_match = PushCondition::EventPropertyIs {
+            key: r"content.org\.fake\.number".to_owned(),
+            value: int!(130).into(),
+        };
+        assert!(!int_no_match.applies(&event, &context));
+
+        let null_match = PushCondition::EventPropertyIs {
+            key: r"content.org\.fake\.null".to_owned(),
+            value: ScalarJsonValue::Null,
+        };
+        assert!(null_match.applies(&event, &context));
+    }
+
+    #[test]
+    fn event_property_contains_applies() {
+        use crate::push::condition::ScalarJsonValue;
+
+        let context = push_context();
+        let event_raw = serde_json::from_str::<Raw<JsonValue>>(
+            r#"{
+                "sender": "@worthy_whale:server.name",
+                "content": {
+                    "org.fake.array": ["Boom!", false, 13, null]
+                }
+            }"#,
+        )
+        .unwrap();
+        let event = FlattenedJson::from_raw(&event_raw);
+
+        let wrong_key =
+            PushCondition::EventPropertyContains { key: "send".to_owned(), value: false.into() };
+        assert!(!wrong_key.applies(&event, &context));
+
+        let string_match = PushCondition::EventPropertyContains {
+            key: r"content.org\.fake\.array".to_owned(),
+            value: "Boom!".into(),
+        };
+        assert!(string_match.applies(&event, &context));
+
+        let string_no_match = PushCondition::EventPropertyContains {
+            key: r"content.org\.fake\.array".to_owned(),
+            value: "Boom".into(),
+        };
+        assert!(!string_no_match.applies(&event, &context));
+
+        let bool_match = PushCondition::EventPropertyContains {
+            key: r"content.org\.fake\.array".to_owned(),
+            value: false.into(),
+        };
+        assert!(bool_match.applies(&event, &context));
+
+        let bool_no_match = PushCondition::EventPropertyContains {
+            key: r"content.org\.fake\.array".to_owned(),
+            value: true.into(),
+        };
+        assert!(!bool_no_match.applies(&event, &context));
+
+        let int_match = PushCondition::EventPropertyContains {
+            key: r"content.org\.fake\.array".to_owned(),
+            value: int!(13).into(),
+        };
+        assert!(int_match.applies(&event, &context));
+
+        let int_no_match = PushCondition::EventPropertyContains {
+            key: r"content.org\.fake\.array".to_owned(),
+            value: int!(130).into(),
+        };
+        assert!(!int_no_match.applies(&event, &context));
+
+        let null_match = PushCondition::EventPropertyContains {
+            key: r"content.org\.fake\.array".to_owned(),
+            value: ScalarJsonValue::Null,
+        };
+        assert!(null_match.applies(&event, &context));
     }
 }

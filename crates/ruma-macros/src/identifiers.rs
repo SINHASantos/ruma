@@ -29,7 +29,7 @@ pub fn expand_id_zst(input: ItemStruct) -> syn::Result<TokenStream> {
 
     let owned_decl = expand_owned_id(&input);
 
-    let meta = input.attrs.iter().filter(|attr| attr.path.is_ident("ruma_id")).try_fold(
+    let meta = input.attrs.iter().filter(|attr| attr.path().is_ident("ruma_id")).try_fold(
         IdZstMeta::default(),
         |meta, attr| {
             let list: Punctuated<IdZstMeta, Token![,]> =
@@ -129,6 +129,13 @@ pub fn expand_id_zst(input: ItemStruct) -> syn::Result<TokenStream> {
         }
 
         #[automatically_derived]
+        impl #impl_generics AsRef<#id_ty> for #id_ty {
+            fn as_ref(&self) -> &#id_ty {
+                self
+            }
+        }
+
+        #[automatically_derived]
         impl #impl_generics AsRef<str> for #id_ty {
             fn as_ref(&self) -> &str {
                 self.as_str()
@@ -139,6 +146,20 @@ pub fn expand_id_zst(input: ItemStruct) -> syn::Result<TokenStream> {
         impl #impl_generics AsRef<str> for Box<#id_ty> {
             fn as_ref(&self) -> &str {
                 self.as_str()
+            }
+        }
+
+        #[automatically_derived]
+        impl #impl_generics AsRef<[u8]> for #id_ty {
+            fn as_ref(&self) -> &[u8] {
+                self.as_bytes()
+            }
+        }
+
+        #[automatically_derived]
+        impl #impl_generics AsRef<[u8]> for Box<#id_ty> {
+            fn as_ref(&self) -> &[u8] {
+                self.as_bytes()
             }
         }
 
@@ -262,7 +283,14 @@ fn expand_owned_id(input: &ItemStruct) -> TokenStream {
         #[automatically_derived]
         impl #impl_generics AsRef<str> for #owned_ty {
             fn as_ref(&self) -> &str {
-                (*self.inner).as_ref()
+                self.inner.as_str()
+            }
+        }
+
+        #[automatically_derived]
+        impl #impl_generics AsRef<[u8]> for #owned_ty {
+            fn as_ref(&self) -> &[u8] {
+                self.inner.as_bytes()
             }
         }
 

@@ -26,7 +26,7 @@ pub mod v3 {
     const METADATA: Metadata = metadata! {
         method: POST,
         rate_limited: true,
-        authentication: None,
+        authentication: AppserviceToken,
         history: {
             1.0 => "/_matrix/client/r0/login",
             1.1 => "/_matrix/client/v3/login",
@@ -141,7 +141,7 @@ pub mod v3 {
 
     /// The authentication mechanism.
     #[derive(Clone, Serialize)]
-    #[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+    #[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
     #[serde(untagged)]
     pub enum LoginInfo {
         /// An identifier and password are supplied to authenticate.
@@ -222,33 +222,65 @@ pub mod v3 {
 
     /// An identifier and password to supply as authentication.
     #[derive(Clone, Deserialize, Serialize)]
-    #[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+    #[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
     #[serde(tag = "type", rename = "m.login.password")]
     pub struct Password {
         /// Identification information for the user.
-        pub identifier: UserIdentifier,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub identifier: Option<UserIdentifier>,
 
         /// The password.
         pub password: String,
+
+        /// Username for the user.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[deprecated = "\
+            Since Matrix Client-Server API r0.4.0, clients should use `identifier`\
+            instead.\
+        "]
+        pub user: Option<String>,
+
+        /// 3rd-party identifier address for the user.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[deprecated = "\
+            Since Matrix Client-Server API r0.4.0, clients should use `identifier`\
+            instead.\
+        "]
+        pub address: Option<String>,
+
+        /// 3rd-party identifier medium for the user.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[deprecated = "\
+            Since Matrix Client-Server API r0.4.0, clients should use `identifier`\
+            instead.\
+        "]
+        pub medium: Option<String>,
     }
 
     impl Password {
         /// Creates a new `Password` with the given identifier and password.
+        #[allow(deprecated)]
         pub fn new(identifier: UserIdentifier, password: String) -> Self {
-            Self { identifier, password }
+            Self { identifier: Some(identifier), password, user: None, address: None, medium: None }
         }
     }
 
     impl fmt::Debug for Password {
+        #[allow(deprecated)]
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            let Self { identifier, password: _ } = self;
-            f.debug_struct("Password").field("identifier", identifier).finish_non_exhaustive()
+            let Self { identifier, password: _, user, address, medium } = self;
+            f.debug_struct("Password")
+                .field("identifier", identifier)
+                .field("user", user)
+                .field("address", address)
+                .field("medium", medium)
+                .finish_non_exhaustive()
         }
     }
 
     /// A token to supply as authentication.
     #[derive(Clone, Deserialize, Serialize)]
-    #[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+    #[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
     #[serde(tag = "type", rename = "m.login.token")]
     pub struct Token {
         /// The token.
@@ -271,17 +303,26 @@ pub mod v3 {
 
     /// An identifier to supply for Application Service authentication.
     #[derive(Clone, Debug, Deserialize, Serialize)]
-    #[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+    #[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
     #[serde(tag = "type", rename = "m.login.application_service")]
     pub struct ApplicationService {
         /// Identification information for the user.
-        pub identifier: UserIdentifier,
+        pub identifier: Option<UserIdentifier>,
+
+        /// Username for the user.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[deprecated = "\
+            Since Matrix Client-Server API r0.4.0, clients should use `identifier`\
+            instead.\
+        "]
+        pub user: Option<String>,
     }
 
     impl ApplicationService {
         /// Creates a new `ApplicationService` with the given identifier.
+        #[allow(deprecated)]
         pub fn new(identifier: UserIdentifier) -> Self {
-            Self { identifier }
+            Self { identifier: Some(identifier), user: None }
         }
     }
 
@@ -306,7 +347,7 @@ pub mod v3 {
 
     /// Client configuration provided by the server.
     #[derive(Clone, Debug, Deserialize, Serialize)]
-    #[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+    #[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
     pub struct DiscoveryInfo {
         /// Information about the homeserver to connect to.
         #[serde(rename = "m.homeserver")]
@@ -326,7 +367,7 @@ pub mod v3 {
 
     /// Information about the homeserver to connect to.
     #[derive(Clone, Debug, Deserialize, Serialize)]
-    #[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+    #[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
     pub struct HomeserverInfo {
         /// The base URL for the homeserver for client-server connections.
         pub base_url: String,
@@ -341,7 +382,7 @@ pub mod v3 {
 
     /// Information about the identity server to connect to.
     #[derive(Clone, Debug, Deserialize, Serialize)]
-    #[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+    #[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
     pub struct IdentityServerInfo {
         /// The base URL for the identity server for client-server connections.
         pub base_url: String,
@@ -356,7 +397,7 @@ pub mod v3 {
 
     #[cfg(test)]
     mod tests {
-        use assert_matches::assert_matches;
+        use assert_matches2::assert_matches;
         use serde_json::{from_value as from_json_value, json};
 
         use super::{LoginInfo, Token};
@@ -364,7 +405,7 @@ pub mod v3 {
 
         #[test]
         fn deserialize_login_type() {
-            let login = assert_matches!(
+            assert_matches!(
                 from_json_value(json!({
                     "type": "m.login.password",
                     "identifier": {
@@ -374,22 +415,19 @@ pub mod v3 {
                     "password": "ilovebananas"
                 }))
                 .unwrap(),
-                LoginInfo::Password(login) => login
+                LoginInfo::Password(login)
             );
-            let user = assert_matches!(
-                login.identifier,
-                UserIdentifier::UserIdOrLocalpart(user) => user
-            );
+            assert_matches!(login.identifier, Some(UserIdentifier::UserIdOrLocalpart(user)));
             assert_eq!(user, "cheeky_monkey");
             assert_eq!(login.password, "ilovebananas");
 
-            let token = assert_matches!(
+            assert_matches!(
                 from_json_value(json!({
                     "type": "m.login.token",
                     "token": "1234567890abcdef"
                 }))
                 .unwrap(),
-                LoginInfo::Token(Token { token }) => token
+                LoginInfo::Token(Token { token })
             );
             assert_eq!(token, "1234567890abcdef");
         }
@@ -427,9 +465,15 @@ pub mod v3 {
             );
 
             let req: http::Request<Vec<u8>> = Request {
+                #[allow(deprecated)]
                 login_info: LoginInfo::Password(Password {
-                    identifier: UserIdentifier::Email { address: "hello@example.com".to_owned() },
+                    identifier: Some(UserIdentifier::Email {
+                        address: "hello@example.com".to_owned(),
+                    }),
                     password: "deadbeef".to_owned(),
+                    user: None,
+                    address: None,
+                    medium: None,
                 }),
                 device_id: None,
                 initial_device_display_name: Some("test".to_owned()),

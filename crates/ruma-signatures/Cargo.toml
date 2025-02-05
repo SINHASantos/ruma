@@ -1,28 +1,28 @@
 [package]
 categories = ["api-bindings", "cryptography"]
 description = "Digital signatures according to the Matrix specification."
-homepage = "https://www.ruma.io/"
+homepage = "https://ruma.dev/"
 keywords = ["matrix", "chat", "messaging", "ruma", "cryptography"]
 license = "MIT"
 name = "ruma-signatures"
 readme = "README.md"
 repository = "https://github.com/ruma/ruma"
-version = "0.13.1"
+version = "0.17.0"
 edition = "2021"
 
 [package.metadata.docs.rs]
 all-features = true
 
 [features]
+# Allow extra characters in signature IDs not allowed in the specification.
+compat-signature-id = []
 ring-compat = ["dep:subslice"]
-unstable-exhaustive-types = []
 
 [dependencies]
 base64 = { workspace = true }
-ed25519-dalek = "1.0.1"
-pkcs8 = { version = "0.9.0", features = ["alloc"] }
-# because dalek uses an older version of rand_core
-rand = { version = "0.7", features = ["getrandom"] }
+ed25519-dalek = { version = "2.0.0", features = ["pkcs8", "rand_core"] }
+pkcs8 = { version = "0.10.0", features = ["alloc"] }
+rand = { workspace = true, features = ["getrandom"] }
 ruma-common = { workspace = true, features = ["canonical-json"] }
 serde_json = { workspace = true }
 sha2 = "0.10.6"
@@ -30,4 +30,8 @@ subslice = { version = "0.2.3", optional = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-assert_matches = { workspace = true }
+assert_matches2 = { workspace = true }
+insta = { workspace = true }
+
+[lints]
+workspace = true

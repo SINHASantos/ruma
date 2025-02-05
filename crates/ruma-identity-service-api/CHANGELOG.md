@@ -1,5 +1,44 @@
 # [unreleased]
 
+Breaking changes:
+
+- `get_supported_versions::Response::known_versions()` returns a
+  `BTreeSet<MatrixVersion>` instead of a `DoubleEndedIterator`.
+
+# 0.11.0
+
+Improvements:
+
+- The `unstable-exhaustive-types` cargo feature was replaced by the
+  `ruma_unstable_exhaustive_types` compile-time `cfg` setting. Like all `cfg`
+  settings, it can be enabled at compile-time with the `RUSTFLAGS` environment
+  variable, or inside `.cargo/config.toml`. It can also be enabled by setting
+  the `RUMA_UNSTABLE_EXHAUSTIVE_TYPES` environment variable.
+
+# 0.10.0
+
+Breaking changes:
+
+- Change type of `client_secret` field in `ThreePidOwnershipProof`
+  from `Box<ClientSecret>` to `OwnedClientSecret`
+
+# 0.9.0
+
+Breaking changes:
+
+- The http crate had a major version bump to version 1.1
+
+Improvements:
+
+- The type returned by `get_supported_versions::known_versions()` was simplified
+
+# 0.8.0
+
+Breaking changes:
+
+* Fix the format of the keys in `invitation::store_invitation::v2::PublicKeys` according to a spec
+  clarification
+
 # 0.7.1
 
 Improvements:

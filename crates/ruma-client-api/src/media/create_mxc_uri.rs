@@ -2,15 +2,14 @@
 //!
 //! Create an MXC URI without content.
 
-pub mod unstable {
-    //! `/unstable/` ([spec])
+pub mod v1 {
+    //! `/v1/` ([spec])
     //!
-    //! [spec]: https://github.com/tulir/matrix-doc/blob/asynchronous_uploads/proposals/2246-asynchronous-uploads.md
+    //! [spec]: https://spec.matrix.org/latest/client-server-api/#post_matrixmediav1create
 
-    use js_int::UInt;
     use ruma_common::{
         api::{request, response, Metadata},
-        metadata, OwnedMxcUri,
+        metadata, MilliSecondsSinceUnixEpoch, OwnedMxcUri,
     };
 
     const METADATA: Metadata = metadata! {
@@ -19,6 +18,7 @@ pub mod unstable {
         authentication: AccessToken,
         history: {
             unstable => "/_matrix/media/unstable/fi.mau.msc2246/create",
+            1.7 => "/_matrix/media/v1/create",
         }
     };
 
@@ -34,13 +34,14 @@ pub mod unstable {
         pub content_uri: OwnedMxcUri,
 
         /// The time at which the URI will expire if an upload has not been started.
-        pub unused_expires_at: UInt,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub unused_expires_at: Option<MilliSecondsSinceUnixEpoch>,
     }
 
     impl Response {
-        /// Creates a new `Response` with the given MXC URI which expires at a given point in time.
-        pub fn new(content_uri: OwnedMxcUri, unused_expires_at: UInt) -> Self {
-            Self { content_uri, unused_expires_at }
+        /// Creates a new `Response` with the given MXC URI.
+        pub fn new(content_uri: OwnedMxcUri) -> Self {
+            Self { content_uri, unused_expires_at: None }
         }
     }
 }

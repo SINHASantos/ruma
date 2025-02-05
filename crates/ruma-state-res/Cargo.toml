@@ -3,24 +3,21 @@ name = "ruma-state-res"
 categories = ["api-bindings", "web-programming"]
 keywords = ["matrix", "chat", "ruma"]
 description = "An abstraction for Matrix state resolution."
-homepage = "https://www.ruma.io/"
+homepage = "https://ruma.dev/"
 repository = "https://github.com/ruma/ruma"
 readme = "README.md"
 license = "MIT"
-version = "0.9.1"
+version = "0.13.0"
 edition = "2021"
-rust-version = "1.64"
+rust-version = { workspace = true }
 
 [package.metadata.docs.rs]
 all-features = true
 
-[features]
-unstable-exhaustive-types = []
-
 [dependencies]
-itertools = "0.10.0"
 js_int = { workspace = true }
-ruma-common = { workspace = true, features = ["events"] }
+ruma-common = { workspace = true }
+ruma-events = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -30,12 +27,17 @@ tracing = { workspace = true }
 criterion = { workspace = true, optional = true }
 
 [dev-dependencies]
+insta = { workspace = true }
 maplit = { workspace = true }
-rand = "0.8.3"
-ruma-common = { workspace = true, features = ["unstable-pdu"] }
-tracing-subscriber = "0.3.16"
+rand = { workspace = true }
+ruma-events = { workspace = true, features = ["unstable-pdu"] }
+similar = { workspace = true }
+tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
 
 [[bench]]
 name = "state_res_bench"
 harness = false
 required-features = ["criterion"]
+
+[lints]
+workspace = true

@@ -9,8 +9,8 @@ pub mod v3 {
     //! [by their Matrix identifier][spec-mxid], and one to invite a user
     //! [by their third party identifier][spec-3pid].
     //!
-    //! [spec-mxid]: https://spec.matrix.org/v1.6/client-server-api/#post_matrixclientv3roomsroomidinvite
-    //! [spec-3pid]: https://spec.matrix.org/v1.6/client-server-api/#post_matrixclientv3roomsroomidinvite-1
+    //! [spec-mxid]: https://spec.matrix.org/latest/client-server-api/#post_matrixclientv3roomsroomidinvite
+    //! [spec-3pid]: https://spec.matrix.org/latest/client-server-api/#thirdparty_post_matrixclientv3roomsroomidinvite
 
     use ruma_common::{
         api::{request, response, Metadata},
@@ -67,7 +67,7 @@ pub mod v3 {
 
     /// Distinguishes between invititations by Matrix or third party identifiers.
     #[derive(Clone, Debug, Deserialize, Serialize)]
-    #[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+    #[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
     #[serde(untagged)]
     pub enum InvitationRecipient {
         /// Used to invite user by their Matrix identifier.
@@ -82,7 +82,7 @@ pub mod v3 {
 
     #[cfg(test)]
     mod tests {
-        use assert_matches::assert_matches;
+        use assert_matches2::assert_matches;
         use ruma_common::thirdparty::Medium;
         use serde_json::{from_value as from_json_value, json};
 
@@ -94,10 +94,7 @@ pub mod v3 {
                 from_json_value::<InvitationRecipient>(json!({ "user_id": "@carl:example.org" }))
                     .unwrap();
 
-            let user_id = assert_matches!(
-                incoming,
-                InvitationRecipient::UserId { user_id } => user_id
-            );
+            assert_matches!(incoming, InvitationRecipient::UserId { user_id });
             assert_eq!(user_id, "@carl:example.org");
         }
 
@@ -111,10 +108,7 @@ pub mod v3 {
             }))
             .unwrap();
 
-            let third_party_id = assert_matches!(
-                incoming,
-                InvitationRecipient::ThirdPartyId(id) => id
-            );
+            assert_matches!(incoming, InvitationRecipient::ThirdPartyId(third_party_id));
 
             assert_eq!(third_party_id.id_server, "example.org");
             assert_eq!(third_party_id.id_access_token, "abcdefghijklmnop");

@@ -1,5 +1,5 @@
-#![doc(html_favicon_url = "https://www.ruma.io/favicon.ico")]
-#![doc(html_logo_url = "https://www.ruma.io/images/logo.png")]
+#![doc(html_favicon_url = "https://ruma.dev/favicon.ico")]
+#![doc(html_logo_url = "https://ruma.dev/images/logo.png")]
 //! (De)serializable types for the [Matrix Client-Server API][client-api].
 //! These types can be shared by client and server code.
 //!
@@ -12,9 +12,14 @@
 pub mod account;
 pub mod alias;
 pub mod appservice;
+pub mod authenticated_media;
 pub mod backup;
 pub mod config;
 pub mod context;
+#[cfg(feature = "unstable-msc3814")]
+pub mod dehydrated_device;
+#[cfg(feature = "unstable-msc4140")]
+pub mod delayed_events;
 pub mod device;
 pub mod directory;
 pub mod discovery;
@@ -33,6 +38,8 @@ pub mod read_marker;
 pub mod receipt;
 pub mod redact;
 pub mod relations;
+#[cfg(feature = "unstable-msc4108")]
+pub mod rendezvous;
 pub mod room;
 pub mod search;
 pub mod server;

@@ -1,5 +1,5 @@
-#![doc(html_favicon_url = "https://www.ruma.io/favicon.ico")]
-#![doc(html_logo_url = "https://www.ruma.io/images/logo.png")]
+#![doc(html_favicon_url = "https://ruma.dev/favicon.ico")]
+#![doc(html_logo_url = "https://ruma.dev/images/logo.png")]
 //! (De)serializable types for the [Matrix Server-Server API][federation-api].
 //! These types are used by server code.
 //!
@@ -12,6 +12,7 @@ use std::fmt;
 
 mod serde;
 
+pub mod authenticated_media;
 pub mod authorization;
 pub mod backfill;
 pub mod device;
@@ -23,6 +24,7 @@ pub mod knock;
 pub mod membership;
 pub mod openid;
 pub mod query;
+pub mod room;
 pub mod space;
 pub mod thirdparty;
 pub mod transactions;

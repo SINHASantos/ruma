@@ -4,11 +4,11 @@
 
 use ruma_common::{
     api::{request, response, Metadata},
-    events::{room::member::RoomMemberEventContent, AnyStrippedStateEvent, StateEventType},
     metadata,
     serde::Raw,
     MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedRoomId, OwnedServerName, OwnedUserId,
 };
+use ruma_events::{room::member::RoomMemberEventContent, AnyStrippedStateEvent, StateEventType};
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue as RawJsonValue;
 
@@ -67,7 +67,7 @@ pub struct Response {
 
 /// Information included alongside an event that is not signed.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct UnsignedEventContent {
     /// An optional list of simplified events to help the receiver of the invite identify the room.
     /// The recommended events to include are the join rules, canonical alias, avatar, and name of

@@ -1,14 +1,10 @@
 use std::io::{stdin, stdout, BufRead, Write};
 
 use clap::Args;
-use isahc::{
-    auth::{Authentication, Credentials},
-    config::Configurable,
-    http::StatusCode,
-    HttpClient, ReadResponseExt, Request,
-};
+use reqwest::{blocking::Client, StatusCode};
 use semver::Version;
 use serde_json::json;
+use xshell::Shell;
 
 use crate::{cargo::Package, cmd, util::ask_yes_no, GithubConfig, Metadata, Result};
 
@@ -40,10 +36,13 @@ pub struct ReleaseTask {
     version: Version,
 
     /// The http client to use for requests.
-    http_client: HttpClient,
+    http_client: Client,
 
     /// The github configuration required to publish a release.
     config: GithubConfig,
+
+    /// The shell API to use to run commands.
+    sh: Shell,
 
     /// List the steps but don't actually change anything
     pub dry_run: bool,
@@ -52,7 +51,8 @@ pub struct ReleaseTask {
 impl ReleaseTask {
     /// Create a new `ReleaseTask` with the given `name` and `version`.
     pub(crate) fn new(name: String, version: Version, dry_run: bool) -> Result<Self> {
-        let metadata = Metadata::load()?;
+        let sh = Shell::new()?;
+        let metadata = Metadata::load(&sh)?;
 
         let package = metadata
             .packages
@@ -61,43 +61,40 @@ impl ReleaseTask {
             .find(|p| p.name == name)
             .ok_or(format!("Package {name} not found in cargo metadata"))?;
 
-        let config = crate::Config::load()?.github;
+        let config = crate::Config::load(&sh)?.github;
 
-        let http_client = HttpClient::new()?;
+        let http_client = Client::builder().user_agent("ruma xtask").build()?;
 
-        Ok(Self { metadata, package, version, http_client, config, dry_run })
+        Ok(Self { metadata, package, version, http_client, config, sh, dry_run })
     }
 
     /// Run the task to effectively create a release.
     pub(crate) fn run(&mut self) -> Result<()> {
-        if self.package.name == "ruma-macros" {
-            return Err(
-                "The ruma-macros crate is always released together with the ruma-common crate. \
-                 To release both, simply run `cargo xtask release ruma-common`"
-                    .into(),
-            );
-        }
-
         let title = &self.title();
         let prerelease = !self.version.pre.is_empty();
-        let publish_only = self.package.name == "ruma-identifiers-validation";
+        let publish_only =
+            ["ruma-identifiers-validation", "ruma-macros"].contains(&self.package.name.as_str());
 
         println!(
-            "Starting {} for {title}…",
+            "Starting {}{} for {title}…",
             match prerelease {
                 true => "pre-release",
                 false => "release",
             },
+            match self.dry_run {
+                true => " dry run",
+                false => "",
+            }
         );
 
         if self.is_released()? {
             return Err("This crate version is already released".into());
         }
 
-        let remote = Self::git_remote()?;
+        let remote = self.git_remote()?;
 
         println!("Checking status of git repository…");
-        if !cmd!("git status -s -uno").read()?.is_empty()
+        if !cmd!(&self.sh, "git status -s -uno").read()?.is_empty()
             && !ask_yes_no("This git repository contains uncommitted changes. Continue?")?
         {
             return Ok(());
@@ -113,24 +110,9 @@ impl ReleaseTask {
             return Ok(());
         }
 
-        let mut macros = if self.package.name == "ruma-common" {
-            self.metadata.packages.iter().find(|p| p.name == "ruma-macros").map(ToOwned::to_owned)
-        } else {
-            None
-        };
-
         let create_commit = if self.package.version != self.version {
-            if let Some(m) = macros.as_mut() {
-                println!("Updating version of ruma-macros crate…");
-
-                m.update_version(&self.version, self.dry_run)?;
-                m.update_dependants(&self.metadata, self.dry_run)?;
-
-                println!("Resuming release of {}…", self.title());
-            }
-
-            self.package.update_version(&self.version, self.dry_run)?;
-            self.package.update_dependants(&self.metadata, self.dry_run)?;
+            self.package.update_version(&self.sh, &self.version, self.dry_run)?;
+            self.package.update_dependants(&self.sh, &self.metadata, self.dry_run)?;
             true
         } else if !ask_yes_no(&format!(
             "Package is already version {}. Skip creating a commit and continue?",
@@ -141,23 +123,23 @@ impl ReleaseTask {
             false
         };
 
-        let changes = &self.package.changes(!prerelease && !self.dry_run)?;
+        let changes = &self.package.changes(&self.sh, !prerelease && !self.dry_run)?;
+
+        if self.dry_run {
+            println!("Changes:\n{changes}");
+        }
 
         if create_commit {
             self.commit()?;
         }
 
-        if let Some(m) = macros {
-            m.publish(&self.http_client, self.dry_run)?;
-        }
+        self.package.publish(&self.sh, &self.http_client, self.dry_run)?;
 
-        self.package.publish(&self.http_client, self.dry_run)?;
-
-        let branch = cmd!("git rev-parse --abbrev-ref HEAD").read()?;
+        let branch = cmd!(&self.sh, "git rev-parse --abbrev-ref HEAD").read()?;
         if publish_only {
             println!("Pushing to remote repository…");
             if !self.dry_run {
-                cmd!("git push {remote} {branch}").run()?;
+                cmd!(&self.sh, "git push {remote} {branch}").run()?;
             }
 
             println!("Crate published successfully!");
@@ -167,18 +149,18 @@ impl ReleaseTask {
         let tag = &self.tag_name();
 
         println!("Creating git tag '{tag}'…");
-        if cmd!("git tag -l {tag}").read()?.is_empty() {
+        if cmd!(&self.sh, "git tag -l {tag}").read()?.is_empty() {
             if !self.dry_run {
-                cmd!("git tag -s {tag} -m {title} -m {changes}").read()?;
+                cmd!(&self.sh, "git tag -s {tag} -m {title} -m {changes}").read()?;
             }
         } else if !ask_yes_no("This tag already exists. Skip this step and continue?")? {
             return Ok(());
         }
 
         println!("Pushing to remote repository…");
-        if cmd!("git ls-remote --tags {remote} {tag}").read()?.is_empty() {
+        if cmd!(&self.sh, "git ls-remote --tags {remote} {tag}").read()?.is_empty() {
             if !self.dry_run {
-                cmd!("git push {remote} {branch} {tag}").run()?;
+                cmd!(&self.sh, "git push {remote} {branch} {tag}").run()?;
             }
         } else if !ask_yes_no("This tag has already been pushed. Skip this step and continue?")? {
             return Ok(());
@@ -190,7 +172,7 @@ impl ReleaseTask {
         }
 
         println!("Creating release on GitHub…");
-        let request_body = &json!({
+        let request_body = json!({
             "tag_name": tag,
             "name": title,
             "body": changes.trim_softbreaks(),
@@ -202,6 +184,13 @@ impl ReleaseTask {
         }
 
         println!("Release created successfully!");
+
+        if self.package.name == "ruma-macros" {
+            println!(
+                "Reminder: Make sure to release new versions of both ruma-common and ruma-events \
+                 so users can actually start using this release"
+            );
+        }
 
         Ok(())
     }
@@ -217,9 +206,9 @@ impl ReleaseTask {
     }
 
     /// Load the GitHub config from the config file.
-    fn git_remote() -> Result<String> {
-        let branch = cmd!("git rev-parse --abbrev-ref HEAD").read()?;
-        let remote = cmd!("git config branch.{branch}.remote").read()?;
+    fn git_remote(&self) -> Result<String> {
+        let branch = cmd!(&self.sh, "git rev-parse --abbrev-ref HEAD").read()?;
+        let remote = cmd!(&self.sh, "git config branch.{branch}.remote").read()?;
 
         if remote.is_empty() {
             return Err("Could not get current git remote".into());
@@ -254,7 +243,7 @@ impl ReleaseTask {
                         return Err("User aborted commit".into());
                     }
                     "d" | "diff" => {
-                        cmd!("git diff").run()?;
+                        cmd!(&self.sh, "git diff").run()?;
                     }
                     _ => {
                         println!("Unknown command.");
@@ -272,7 +261,7 @@ impl ReleaseTask {
         println!("Creating commit with message '{message}'…");
 
         if !self.dry_run {
-            cmd!("git commit -a -m {message}").read()?;
+            cmd!(&self.sh, "git commit -a -m {message}").read()?;
         }
 
         Ok(())
@@ -280,21 +269,23 @@ impl ReleaseTask {
 
     /// Check if the tag for the current version of the crate has been pushed on GitHub.
     fn is_released(&self) -> Result<bool> {
-        let response =
-            self.http_client.get(format!("{GITHUB_API_RUMA}/releases/tags/{}", self.tag_name()))?;
+        let response = self
+            .http_client
+            .get(format!("{GITHUB_API_RUMA}/releases/tags/{}", self.tag_name()))
+            .send()?;
 
         Ok(response.status() == StatusCode::OK)
     }
 
     /// Create the release on GitHub with the given `config` and `credentials`.
-    fn release(&self, body: &str) -> Result<()> {
-        let request = Request::post(format!("{GITHUB_API_RUMA}/releases"))
-            .authentication(Authentication::basic())
-            .credentials(Credentials::new(&self.config.user, &self.config.token))
+    fn release(&self, body: String) -> Result<()> {
+        let response = self
+            .http_client
+            .post(format!("{GITHUB_API_RUMA}/releases"))
+            .basic_auth(&self.config.user, Some(&self.config.token))
             .header("Accept", "application/vnd.github.v3+json")
-            .body(body)?;
-
-        let mut response = self.http_client.send(request)?;
+            .body(body)
+            .send()?;
 
         if response.status() == StatusCode::CREATED {
             Ok(())

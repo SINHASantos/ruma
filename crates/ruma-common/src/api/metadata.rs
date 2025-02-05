@@ -1,6 +1,6 @@
 use std::{
     cmp::Ordering,
-    fmt::{self, Display, Write},
+    fmt::{Display, Write},
     str::FromStr,
 };
 
@@ -19,7 +19,7 @@ use super::{
 use crate::{percent_encode::PATH_PERCENT_ENCODE_SET, serde::slice_to_buf, RoomVersionId};
 
 /// Metadata about an API endpoint.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[allow(clippy::exhaustive_structs)]
 pub struct Metadata {
     /// The HTTP method used by this endpoint.
@@ -73,6 +73,16 @@ impl Metadata {
 
                 Some((header::AUTHORIZATION, format!("Bearer {token}").try_into()?))
             }
+
+            AuthScheme::AccessTokenOptional => match access_token.get_required_for_endpoint() {
+                Some(token) => Some((header::AUTHORIZATION, format!("Bearer {token}").try_into()?)),
+                None => None,
+            },
+
+            AuthScheme::AppserviceToken => match access_token.get_required_for_appservice() {
+                Some(token) => Some((header::AUTHORIZATION, format!("Bearer {token}").try_into()?)),
+                None => None,
+            },
 
             AuthScheme::ServerSignatures => None,
         })
@@ -131,7 +141,7 @@ impl Metadata {
 /// versions stable and unstable.
 ///
 /// The amount and positioning of path variables are the same over all path variants.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[allow(clippy::exhaustive_structs)]
 pub struct VersionHistory {
     /// A list of unstable paths over this endpoint's history.
@@ -168,8 +178,8 @@ impl VersionHistory {
     /// - In stable_paths:
     ///   - matrix versions are in ascending order
     ///   - no matrix version is referenced twice
-    /// - deprecated's version comes after the latest version mentioned in stable_paths, and only if
-    ///   any stable path is defined
+    /// - deprecated's version comes after the latest version mentioned in stable_paths, except for
+    ///   version 1.0, and only if any stable path is defined
     /// - removed comes after deprecated, or after the latest referenced stable_paths, like
     ///   deprecated
     pub const fn new(
@@ -268,8 +278,10 @@ impl VersionHistory {
         if let Some(deprecated) = deprecated {
             if let Some(prev_seen_version) = prev_seen_version {
                 let ord_result = prev_seen_version.const_ord(&deprecated);
-                if ord_result.is_eq() {
-                    // prev_seen_version == deprecated
+                if !deprecated.is_legacy() && ord_result.is_eq() {
+                    // prev_seen_version == deprecated, except for 1.0.
+                    // It is possible that an endpoint was both made stable and deprecated in the
+                    // legacy versions.
                     panic!("deprecated version is equal to latest stable path version")
                 } else if ord_result.is_gt() {
                     // prev_seen_version > deprecated
@@ -356,19 +368,18 @@ impl VersionHistory {
             |version: MatrixVersion| versions.iter().all(|v| v.is_superset_of(version));
 
         // Check if all versions removed this endpoint.
-        if self.removed.map_or(false, greater_or_equal_all) {
+        if self.removed.is_some_and(greater_or_equal_all) {
             return VersioningDecision::Removed;
         }
 
         // Check if *any* version marks this endpoint as stable.
-        if self.added_in().map_or(false, greater_or_equal_any) {
-            let all_deprecated = self.deprecated.map_or(false, greater_or_equal_all);
+        if self.added_in().is_some_and(greater_or_equal_any) {
+            let all_deprecated = self.deprecated.is_some_and(greater_or_equal_all);
 
             return VersioningDecision::Stable {
-                any_deprecated: all_deprecated
-                    || self.deprecated.map_or(false, greater_or_equal_any),
+                any_deprecated: all_deprecated || self.deprecated.is_some_and(greater_or_equal_any),
                 all_deprecated,
-                any_removed: self.removed.map_or(false, greater_or_equal_any),
+                any_removed: self.removed.is_some_and(greater_or_equal_any),
             };
         }
 
@@ -462,10 +473,11 @@ pub enum VersioningDecision {
 /// The Matrix versions Ruma currently understands to exist.
 ///
 /// Matrix, since fall 2021, has a quarterly release schedule, using a global `vX.Y` versioning
-/// scheme.
+/// scheme. Usually `Y` is bumped for new backwards compatible changes, but `X` can be bumped
+/// instead when a large number of `Y` changes feel deserving of a major version increase.
 ///
-/// Every new minor version denotes stable support for endpoints in a *relatively*
-/// backwards-compatible manner.
+/// Every new version denotes stable support for endpoints in a *relatively* backwards-compatible
+/// manner.
 ///
 /// Matrix has a deprecation policy, read more about it here: <https://spec.matrix.org/latest/#deprecation-policy>.
 ///
@@ -473,12 +485,25 @@ pub enum VersioningDecision {
 /// select the right endpoint stability variation to use depending on which Matrix versions you
 /// pass to [`try_into_http_request`](super::OutgoingRequest::try_into_http_request), see its
 /// respective documentation for more information.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+///
+/// The `PartialOrd` and `Ord` implementations of this type sort the variants by release date. A
+/// newer release is greater than an older release.
+///
+/// `MatrixVersion::is_superset_of()` is used to keep track of compatibility between versions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub enum MatrixVersion {
-    /// Version 1.0 of the Matrix specification.
+    /// Matrix 1.0 was a release prior to the global versioning system and does not correspond to a
+    /// version of the Matrix specification.
     ///
-    /// Retroactively defined as <https://spec.matrix.org/latest/#legacy-versioning>.
+    /// It matches the following per-API versions:
+    ///
+    /// * Client-Server API: r0.5.0 to r0.6.1
+    /// * Identity Service API: r0.2.0 to r0.3.0
+    ///
+    /// The other APIs are not supported because they do not have a `GET /versions` endpoint.
+    ///
+    /// See <https://spec.matrix.org/latest/#legacy-versioning>.
     V1_0,
 
     /// Version 1.1 of the Matrix specification, released in Q4 2021.
@@ -510,6 +535,41 @@ pub enum MatrixVersion {
     ///
     /// See <https://spec.matrix.org/v1.6/>.
     V1_6,
+
+    /// Version 1.7 of the Matrix specification, released in Q2 2023.
+    ///
+    /// See <https://spec.matrix.org/v1.7/>.
+    V1_7,
+
+    /// Version 1.8 of the Matrix specification, released in Q3 2023.
+    ///
+    /// See <https://spec.matrix.org/v1.8/>.
+    V1_8,
+
+    /// Version 1.9 of the Matrix specification, released in Q4 2023.
+    ///
+    /// See <https://spec.matrix.org/v1.9/>.
+    V1_9,
+
+    /// Version 1.10 of the Matrix specification, released in Q1 2024.
+    ///
+    /// See <https://spec.matrix.org/v1.10/>.
+    V1_10,
+
+    /// Version 1.11 of the Matrix specification, released in Q2 2024.
+    ///
+    /// See <https://spec.matrix.org/v1.11/>.
+    V1_11,
+
+    /// Version 1.12 of the Matrix specification, released in Q3 2024.
+    ///
+    /// See <https://spec.matrix.org/v1.12/>.
+    V1_12,
+
+    /// Version 1.13 of the Matrix specification, released in Q4 2024.
+    ///
+    /// See <https://spec.matrix.org/v1.13/>.
+    V1_13,
 }
 
 impl TryFrom<&str> for MatrixVersion {
@@ -519,9 +579,10 @@ impl TryFrom<&str> for MatrixVersion {
         use MatrixVersion::*;
 
         Ok(match value {
-            // FIXME: these are likely not entirely correct; https://github.com/ruma/ruma/issues/852
-            "v1.0" |
-            // Additional definitions according to https://spec.matrix.org/latest/#legacy-versioning
+            // Identity service API versions between Matrix 1.0 and 1.1.
+            // They might match older client-server API versions but that should not be a problem in practice.
+            "r0.2.0" | "r0.2.1" | "r0.3.0" |
+            // Client-server API versions between Matrix 1.0 and 1.1.
             "r0.5.0" | "r0.6.0" | "r0.6.1" => V1_0,
             "v1.1" => V1_1,
             "v1.2" => V1_2,
@@ -529,6 +590,13 @@ impl TryFrom<&str> for MatrixVersion {
             "v1.4" => V1_4,
             "v1.5" => V1_5,
             "v1.6" => V1_6,
+            "v1.7" => V1_7,
+            "v1.8" => V1_8,
+            "v1.9" => V1_9,
+            "v1.10" => V1_10,
+            "v1.11" => V1_11,
+            "v1.12" => V1_12,
+            "v1.13" => V1_13,
             _ => return Err(UnknownVersionError),
         })
     }
@@ -545,27 +613,46 @@ impl FromStr for MatrixVersion {
 impl MatrixVersion {
     /// Checks whether a version is compatible with another.
     ///
-    /// A is compatible with B as long as B is equal or less, so long as A and B have the same
-    /// major versions.
+    /// Currently, all versions of Matrix are considered backwards compatible with all the previous
+    /// versions, so this is equivalent to `self >= other`. This behaviour may change in the future,
+    /// if a new release is considered to be breaking compatibility with the previous ones.
     ///
-    /// For example, v1.2 is compatible with v1.1, as it is likely only some additions of
-    /// endpoints on top of v1.1, but v1.1 would not be compatible with v1.2, as v1.1
-    /// cannot represent all of v1.2, in a manner similar to set theory.
-    ///
-    /// Warning: Matrix has a deprecation policy, and Matrix versioning is not as
-    /// straight-forward as this function makes it out to be. This function only exists
-    /// to prune major version differences, and versions too new for `self`.
-    ///
-    /// This (considering if major versions are the same) is equivalent to a `self >= other`
-    /// check.
+    /// > ⚠ Matrix has a deprecation policy, and Matrix versioning is not as straightforward as this
+    /// > function makes it out to be. This function only exists to prune breaking changes between
+    /// > versions, and versions too new for `self`.
     pub fn is_superset_of(self, other: Self) -> bool {
-        let (major_l, minor_l) = self.into_parts();
-        let (major_r, minor_r) = other.into_parts();
-        major_l == major_r && minor_l >= minor_r
+        self >= other
+    }
+
+    /// Get a string representation of this Matrix version.
+    ///
+    /// This is the string that can be found in the response to one of the `GET /versions`
+    /// endpoints. Parsing this string will give the same variant.
+    ///
+    /// Returns `None` for [`MatrixVersion::V1_0`] because it can match several per-API versions.
+    pub const fn as_str(self) -> Option<&'static str> {
+        let string = match self {
+            MatrixVersion::V1_0 => return None,
+            MatrixVersion::V1_1 => "v1.1",
+            MatrixVersion::V1_2 => "v1.2",
+            MatrixVersion::V1_3 => "v1.3",
+            MatrixVersion::V1_4 => "v1.4",
+            MatrixVersion::V1_5 => "v1.5",
+            MatrixVersion::V1_6 => "v1.6",
+            MatrixVersion::V1_7 => "v1.7",
+            MatrixVersion::V1_8 => "v1.8",
+            MatrixVersion::V1_9 => "v1.9",
+            MatrixVersion::V1_10 => "v1.10",
+            MatrixVersion::V1_11 => "v1.11",
+            MatrixVersion::V1_12 => "v1.12",
+            MatrixVersion::V1_13 => "v1.13",
+        };
+
+        Some(string)
     }
 
     /// Decompose the Matrix version into its major and minor number.
-    pub const fn into_parts(self) -> (u8, u8) {
+    const fn into_parts(self) -> (u8, u8) {
         match self {
             MatrixVersion::V1_0 => (1, 0),
             MatrixVersion::V1_1 => (1, 1),
@@ -574,11 +661,18 @@ impl MatrixVersion {
             MatrixVersion::V1_4 => (1, 4),
             MatrixVersion::V1_5 => (1, 5),
             MatrixVersion::V1_6 => (1, 6),
+            MatrixVersion::V1_7 => (1, 7),
+            MatrixVersion::V1_8 => (1, 8),
+            MatrixVersion::V1_9 => (1, 9),
+            MatrixVersion::V1_10 => (1, 10),
+            MatrixVersion::V1_11 => (1, 11),
+            MatrixVersion::V1_12 => (1, 12),
+            MatrixVersion::V1_13 => (1, 13),
         }
     }
 
     /// Try to turn a pair of (major, minor) version components back into a `MatrixVersion`.
-    pub const fn from_parts(major: u8, minor: u8) -> Result<Self, UnknownVersionError> {
+    const fn from_parts(major: u8, minor: u8) -> Result<Self, UnknownVersionError> {
         match (major, minor) {
             (1, 0) => Ok(MatrixVersion::V1_0),
             (1, 1) => Ok(MatrixVersion::V1_1),
@@ -587,6 +681,13 @@ impl MatrixVersion {
             (1, 4) => Ok(MatrixVersion::V1_4),
             (1, 5) => Ok(MatrixVersion::V1_5),
             (1, 6) => Ok(MatrixVersion::V1_6),
+            (1, 7) => Ok(MatrixVersion::V1_7),
+            (1, 8) => Ok(MatrixVersion::V1_8),
+            (1, 9) => Ok(MatrixVersion::V1_9),
+            (1, 10) => Ok(MatrixVersion::V1_10),
+            (1, 11) => Ok(MatrixVersion::V1_11),
+            (1, 12) => Ok(MatrixVersion::V1_12),
+            (1, 13) => Ok(MatrixVersion::V1_13),
             _ => Err(UnknownVersionError),
         }
     }
@@ -648,10 +749,19 @@ impl MatrixVersion {
         }
     }
 
+    // Internal function to check if this version is the legacy (v1.0) version in const-fn contexts
+    const fn is_legacy(&self) -> bool {
+        let self_parts = self.into_parts();
+
+        use konst::primitive::cmp::cmp_u8;
+
+        cmp_u8(self_parts.0, 1).is_eq() && cmp_u8(self_parts.1, 0).is_eq()
+    }
+
     /// Get the default [`RoomVersionId`] for this `MatrixVersion`.
     pub fn default_room_version(&self) -> RoomVersionId {
         match self {
-            // <https://matrix.org/docs/spec/index.html#complete-list-of-room-versions>
+            // <https://spec.matrix.org/historical/index.html#complete-list-of-room-versions>
             MatrixVersion::V1_0
             // <https://spec.matrix.org/v1.1/rooms/#complete-list-of-room-versions>
             | MatrixVersion::V1_1
@@ -664,21 +774,28 @@ impl MatrixVersion {
             // <https://spec.matrix.org/v1.5/rooms/#complete-list-of-room-versions>
             | MatrixVersion::V1_5 => RoomVersionId::V9,
             // <https://spec.matrix.org/v1.6/rooms/#complete-list-of-room-versions>
-            MatrixVersion::V1_6 => RoomVersionId::V10,
+            MatrixVersion::V1_6
+            // <https://spec.matrix.org/v1.7/rooms/#complete-list-of-room-versions>
+            | MatrixVersion::V1_7
+            // <https://spec.matrix.org/v1.8/rooms/#complete-list-of-room-versions>
+            | MatrixVersion::V1_8
+            // <https://spec.matrix.org/v1.9/rooms/#complete-list-of-room-versions>
+            | MatrixVersion::V1_9
+            // <https://spec.matrix.org/v1.10/rooms/#complete-list-of-room-versions>
+            | MatrixVersion::V1_10
+            // <https://spec.matrix.org/v1.11/rooms/#complete-list-of-room-versions>
+            | MatrixVersion::V1_11
+            // <https://spec.matrix.org/v1.12/rooms/#complete-list-of-room-versions>
+            | MatrixVersion::V1_12
+            // <https://spec.matrix.org/v1.13/rooms/#complete-list-of-room-versions>
+            | MatrixVersion::V1_13 => RoomVersionId::V10,
         }
-    }
-}
-
-impl Display for MatrixVersion {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let (major, minor) = self.into_parts();
-        f.write_str(&format!("v{major}.{minor}"))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use assert_matches::assert_matches;
+    use assert_matches2::assert_matches;
     use http::Method;
 
     use super::{
@@ -801,5 +918,16 @@ mod tests {
         const LIT: MatrixVersion = MatrixVersion::from_lit("1.0");
 
         assert_eq!(LIT, V1_0);
+    }
+
+    #[test]
+    fn parse_as_str_sanity() {
+        let version = MatrixVersion::try_from("r0.5.0").unwrap();
+        assert_eq!(version, V1_0);
+        assert_eq!(version.as_str(), None);
+
+        let version = MatrixVersion::try_from("v1.1").unwrap();
+        assert_eq!(version, V1_1);
+        assert_eq!(version.as_str(), Some("v1.1"));
     }
 }

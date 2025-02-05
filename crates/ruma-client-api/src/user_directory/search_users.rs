@@ -80,7 +80,7 @@ pub mod v3 {
 
     /// User data as result of a search.
     #[derive(Clone, Debug, Deserialize, Serialize)]
-    #[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+    #[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
     pub struct User {
         /// The user's matrix user ID.
         pub user_id: OwnedUserId,
@@ -91,11 +91,11 @@ pub mod v3 {
 
         /// The avatar url, as an MXC, if one exists.
         ///
-        /// If you activate the `compat` feature, this field being an empty string in JSON will
-        /// result in `None` here during deserialization.
+        /// If you activate the `compat-empty-string-null` feature, this field being an empty
+        /// string in JSON will result in `None` here during deserialization.
         #[serde(skip_serializing_if = "Option::is_none")]
         #[cfg_attr(
-            feature = "compat",
+            feature = "compat-empty-string-null",
             serde(default, deserialize_with = "ruma_common::serde::empty_string_as_none")
         )]
         pub avatar_url: Option<OwnedMxcUri>,

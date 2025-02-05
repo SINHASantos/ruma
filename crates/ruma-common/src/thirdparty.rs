@@ -2,7 +2,10 @@
 //!
 //! [thirdparty]: https://spec.matrix.org/latest/client-server-api/#third-party-networks
 
-use std::collections::BTreeMap;
+use std::{
+    collections::BTreeMap,
+    hash::{Hash, Hasher},
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -15,7 +18,7 @@ use crate::{
 /// To create an instance of this type, first create a `ProtocolInit` and convert it via
 /// `Protocol::from` / `.into()`.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct Protocol {
     /// Fields which may be used to identify a third party user.
     pub user_fields: Vec<String>,
@@ -25,9 +28,9 @@ pub struct Protocol {
 
     /// A content URI representing an icon for the third party protocol.
     ///
-    /// If you activate the `compat` feature, this field being absent in JSON will result in an
-    /// empty string here during deserialization.
-    #[cfg_attr(feature = "compat", serde(default))]
+    /// If the `compat-optional` feature is enabled, this field being absent in JSON will result
+    /// in an empty string instead of an error when deserializing.
+    #[cfg_attr(feature = "compat-optional", serde(default))]
     pub icon: String,
 
     /// The type definitions for the fields defined in `user_fields` and `location_fields`.
@@ -72,7 +75,7 @@ impl From<ProtocolInit> for Protocol {
 /// To create an instance of this type, first create a `ProtocolInstanceInit` and convert it via
 /// `ProtocolInstance::from` / `.into()`.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct ProtocolInstance {
     /// A human-readable description for the protocol, such as the name.
     pub desc: String,
@@ -91,7 +94,8 @@ pub struct ProtocolInstance {
     ///
     /// See [matrix-spec#833](https://github.com/matrix-org/matrix-spec/issues/833).
     #[cfg(feature = "unstable-unspecified")]
-    pub instance_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instance_id: Option<String>,
 }
 
 /// Initial set of fields of `Protocol`.
@@ -109,30 +113,18 @@ pub struct ProtocolInstanceInit {
 
     /// A unique identifier across all instances.
     pub network_id: String,
-
-    /// A unique identifier across all instances.
-    ///
-    /// See [matrix-spec#833](https://github.com/matrix-org/matrix-spec/issues/833).
-    #[cfg(feature = "unstable-unspecified")]
-    pub instance_id: String,
 }
 
 impl From<ProtocolInstanceInit> for ProtocolInstance {
     fn from(init: ProtocolInstanceInit) -> Self {
-        let ProtocolInstanceInit {
-            desc,
-            fields,
-            network_id,
-            #[cfg(feature = "unstable-unspecified")]
-            instance_id,
-        } = init;
+        let ProtocolInstanceInit { desc, fields, network_id } = init;
         Self {
             desc,
             icon: None,
             fields,
             network_id,
             #[cfg(feature = "unstable-unspecified")]
-            instance_id,
+            instance_id: None,
         }
     }
 }
@@ -142,7 +134,7 @@ impl From<ProtocolInstanceInit> for ProtocolInstance {
 /// To create an instance of this type, first create a `FieldTypeInit` and convert it via
 /// `FieldType::from` / `.into()`.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct FieldType {
     /// A regular expression for validation of a field's value.
     pub regexp: String,
@@ -174,7 +166,7 @@ impl From<FieldTypeInit> for FieldType {
 
 /// A third party network location.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct Location {
     /// An alias for a matrix room.
     pub alias: OwnedRoomAliasId,
@@ -199,7 +191,7 @@ impl Location {
 
 /// A third party network user.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct User {
     /// A matrix user ID representing a third party user.
     pub userid: OwnedUserId,
@@ -239,8 +231,7 @@ pub enum Medium {
 /// To create an instance of this type, first create a `ThirdPartyIdentifierInit` and convert it to
 /// this type using `ThirdPartyIdentifier::Init` / `.into()`.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct ThirdPartyIdentifier {
     /// The third party identifier address.
     pub address: String,
@@ -253,6 +244,20 @@ pub struct ThirdPartyIdentifier {
 
     /// The time when the homeserver associated the third party identifier with the user.
     pub added_at: MilliSecondsSinceUnixEpoch,
+}
+
+impl Eq for ThirdPartyIdentifier {}
+
+impl Hash for ThirdPartyIdentifier {
+    fn hash<H: Hasher>(&self, hasher: &mut H) {
+        (self.medium.as_str(), &self.address).hash(hasher);
+    }
+}
+
+impl PartialEq for ThirdPartyIdentifier {
+    fn eq(&self, other: &ThirdPartyIdentifier) -> bool {
+        self.address == other.address && self.medium == other.medium
+    }
 }
 
 /// Initial set of fields of `ThirdPartyIdentifier`.

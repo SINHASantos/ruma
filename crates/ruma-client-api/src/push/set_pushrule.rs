@@ -1,11 +1,11 @@
-//! `PUT /_matrix/client/*/pushrules/{scope}/{kind}/{ruleId}`
+//! `PUT /_matrix/client/*/pushrules/global/{kind}/{ruleId}`
 //!
 //! This endpoint allows the creation and modification of push rules for this user ID.
 
 pub mod v3 {
     //! `/v3/` ([spec])
     //!
-    //! [spec]: https://spec.matrix.org/latest/client-server-api/#put_matrixclientv3pushrulesscopekindruleid
+    //! [spec]: https://spec.matrix.org/latest/client-server-api/#put_matrixclientv3pushrulesglobalkindruleid
 
     use ruma_common::{
         api::{response, Metadata},
@@ -14,25 +14,20 @@ pub mod v3 {
     };
     use serde::{Deserialize, Serialize};
 
-    use crate::push::RuleScope;
-
     const METADATA: Metadata = metadata! {
         method: PUT,
         rate_limited: true,
         authentication: AccessToken,
         history: {
-            1.0 => "/_matrix/client/r0/pushrules/:scope/:kind/:rule_id",
-            1.1 => "/_matrix/client/v3/pushrules/:scope/:kind/:rule_id",
+            1.0 => "/_matrix/client/r0/pushrules/global/:kind/:rule_id",
+            1.1 => "/_matrix/client/v3/pushrules/global/:kind/:rule_id",
         }
     };
 
     /// Request type for the `set_pushrule` endpoint.
     #[derive(Clone, Debug)]
-    #[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+    #[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
     pub struct Request {
-        /// The scope to set the rule in.
-        pub scope: RuleScope,
-
         /// The rule.
         pub rule: NewPushRule,
 
@@ -51,9 +46,9 @@ pub mod v3 {
     pub struct Response {}
 
     impl Request {
-        /// Creates a new `Request` with the given scope and rule.
-        pub fn new(scope: RuleScope, rule: NewPushRule) -> Self {
-            Self { scope, rule, before: None, after: None }
+        /// Creates a new `Request` with the given rule.
+        pub fn new(rule: NewPushRule) -> Self {
+            Self { rule, before: None, after: None }
         }
     }
 
@@ -87,14 +82,14 @@ pub mod v3 {
             let url = METADATA.make_endpoint_url(
                 considering_versions,
                 base_url,
-                &[&self.scope, &self.rule.kind(), &self.rule.rule_id()],
+                &[&self.rule.kind(), &self.rule.rule_id()],
                 &query_string,
             )?;
 
             let body: RequestBody = self.rule.into();
 
             http::Request::builder()
-                .method(http::Method::GET)
+                .method(METADATA.method)
                 .uri(url)
                 .header(header::CONTENT_TYPE, "application/json")
                 .header(
@@ -147,12 +142,12 @@ pub mod v3 {
                 after: Option<String>,
             }
 
-            let (scope, kind, rule_id): (RuleScope, RuleKind, String) =
-                serde::Deserialize::deserialize(serde::de::value::SeqDeserializer::<
+            let (kind, rule_id): (RuleKind, String) =
+                Deserialize::deserialize(serde::de::value::SeqDeserializer::<
                     _,
                     serde::de::value::Error,
                 >::new(
-                    path_args.iter().map(::std::convert::AsRef::as_ref),
+                    path_args.iter().map(::std::convert::AsRef::as_ref)
                 ))?;
 
             let IncomingRequestQuery { before, after } =
@@ -190,7 +185,7 @@ pub mod v3 {
                 }
             };
 
-            Ok(Self { scope, rule, before, after })
+            Ok(Self { rule, before, after })
         }
     }
 
@@ -253,7 +248,7 @@ pub mod v3 {
                     actions: r.actions,
                     conditions: r.conditions,
                 }),
-                #[cfg(not(feature = "unstable-exhaustive-types"))]
+                #[cfg(not(ruma_unstable_exhaustive_types))]
                 _ => unreachable!("variant added to NewPushRule not covered by RequestBody"),
             }
         }

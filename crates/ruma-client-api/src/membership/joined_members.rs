@@ -58,7 +58,7 @@ pub mod v3 {
 
     /// Information about a room member.
     #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-    #[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+    #[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
     pub struct RoomMember {
         /// The display name of the user.
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -66,11 +66,11 @@ pub mod v3 {
 
         /// The mxc avatar url of the user.
         ///
-        /// If you activate the `compat` feature, this field being an empty string in JSON will
-        /// result in `None` here during deserialization.
+        /// If you activate the `compat-empty-string-null` feature, this field being an empty
+        /// string in JSON will result in `None` here during deserialization.
         #[serde(skip_serializing_if = "Option::is_none")]
         #[cfg_attr(
-            feature = "compat",
+            feature = "compat-empty-string-null",
             serde(default, deserialize_with = "ruma_common::serde::empty_string_as_none")
         )]
         pub avatar_url: Option<OwnedMxcUri>,
@@ -84,7 +84,7 @@ pub mod v3 {
     }
 
     #[cfg(test)]
-    mod test {
+    mod tests {
         use ruma_common::mxc_uri;
         use serde_json::{from_value as from_json_value, json};
 
@@ -103,7 +103,7 @@ pub mod v3 {
                 Some(mxc_uri!("mxc://localhost/wefuiwegh8742w"))
             );
 
-            #[cfg(feature = "compat")]
+            #[cfg(feature = "compat-empty-string-null")]
             {
                 let member = from_json_value::<RoomMember>(json!({
                     "display_name": "alice",

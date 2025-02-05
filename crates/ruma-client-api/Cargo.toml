@@ -1,46 +1,78 @@
 [package]
 categories = ["api-bindings", "web-programming"]
 description = "Types for the endpoints in the Matrix client-server API."
-homepage = "https://www.ruma.io/"
+homepage = "https://ruma.dev/"
 keywords = ["matrix", "chat", "messaging", "ruma"]
 license = "MIT"
 name = "ruma-client-api"
 readme = "README.md"
 repository = "https://github.com/ruma/ruma"
-version = "0.16.2"
+version = "0.20.1"
 edition = "2021"
-rust-version = "1.64"
+rust-version = { workspace = true }
 
 [package.metadata.docs.rs]
 all-features = true
-rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-compat = []
-unstable-exhaustive-types = ["ruma-common/unstable-exhaustive-types"]
-unstable-msc2246 = []
+# OutgoingRequest and IncomingResponse implementations
+client = []
+# IncomingRequest and OutgoingResponse implementations
+server = []
+
+# Allow some mandatory fields in requests / responses to be missing, defaulting
+# them to an empty string in deserialization.
+compat-empty-string-null = []
+
+# Unset avatars by sending an empty string, same as what Element Web does, c.f.
+# https://github.com/matrix-org/matrix-spec/issues/378#issuecomment-1055831264
+compat-unset-avatar = []
+
+# Always serialize the threepids response field in `get_3pids::v3::Response`,
+# even if its value is an empty list.
+compat-get-3pids = []
+
+# Accept `message` as an alias for `error` in `upload_signatures::v3::Failure`,
+# since that's what Synapse sends.
+compat-upload-signatures = []
+
 unstable-msc2666 = []
 unstable-msc2448 = []
 unstable-msc2654 = []
-unstable-msc2677 = []
 unstable-msc2965 = []
 unstable-msc2967 = []
+unstable-msc3266 = []
 unstable-msc3488 = []
 unstable-msc3575 = []
-client = []
-server = []
+unstable-msc3814 = []
+unstable-msc3824 = ["unstable-msc2965"]
+unstable-msc3843 = []
+unstable-msc3983 = []
+unstable-msc4108 = []
+unstable-msc4121 = []
+unstable-msc4140 = []
+unstable-msc4186 = []
 
 [dependencies]
+as_variant = { workspace = true }
 assign = { workspace = true }
-bytes = "1.0.1"
+bytes = { workspace = true }
+date_header = "1.0.5"
 http = { workspace = true }
 js_int = { workspace = true, features = ["serde"] }
 js_option = "0.1.1"
 maplit = { workspace = true }
-ruma-common = { workspace = true, features = ["api", "events"] }
+ruma-common = { workspace = true, features = ["api"] }
+ruma-events = { workspace = true }
 serde = { workspace = true }
 serde_html_form = { workspace = true }
 serde_json = { workspace = true }
+thiserror = { workspace = true }
+url = { workspace = true, features = ["serde"] }
+web-time = { workspace = true }
 
 [dev-dependencies]
-assert_matches = { workspace = true }
+assert_matches2 = { workspace = true }
+
+[lints]
+workspace = true

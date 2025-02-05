@@ -32,6 +32,9 @@ pub enum MatrixId {
     User(OwnedUserId),
 
     /// An event ID.
+    ///
+    /// Constructing this variant from an `OwnedRoomAliasId` is deprecated, because room aliases
+    /// are mutable, so the URI might break after a while.
     Event(OwnedRoomOrAliasId, OwnedEventId),
 }
 
@@ -259,7 +262,7 @@ impl From<(&RoomAliasId, &EventId)> for MatrixId {
 /// in a formatting macro or via `.to_string()`).
 ///
 /// [`matrix.to` URI]: https://spec.matrix.org/latest/appendices/#matrixto-navigation
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MatrixToUri {
     id: MatrixId,
     via: Vec<OwnedServerName>,
@@ -443,7 +446,7 @@ impl From<Box<str>> for UriAction {
 /// in a formatting macro or via `.to_string()`).
 ///
 /// [`matrix:` URI]: https://spec.matrix.org/latest/appendices/#matrix-uri-scheme
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MatrixUri {
     id: MatrixId,
     via: Vec<OwnedServerName>,
@@ -540,7 +543,7 @@ impl FromStr for MatrixUri {
 
 #[cfg(test)]
 mod tests {
-    use assert_matches::assert_matches;
+    use assert_matches2::assert_matches;
     use ruma_identifiers_validation::{
         error::{MatrixIdError, MatrixToError, MatrixUriError},
         Error,
@@ -572,12 +575,11 @@ mod tests {
                 .to_string(),
             "https://matrix.to/#/!ruma:notareal.hs?via=notareal.hs"
         );
-        assert_eq!(
-            room_alias_id!("#ruma:notareal.hs")
-                .matrix_to_event_uri(event_id!("$event:notareal.hs"))
-                .to_string(),
-            "https://matrix.to/#/%23ruma:notareal.hs/$event:notareal.hs"
-        );
+        #[allow(deprecated)]
+        let uri = room_alias_id!("#ruma:notareal.hs")
+            .matrix_to_event_uri(event_id!("$event:notareal.hs"))
+            .to_string();
+        assert_eq!(uri, "https://matrix.to/#/%23ruma:notareal.hs/$event:notareal.hs");
         assert_eq!(
             room_id!("!ruma:notareal.hs")
                 .matrix_to_event_uri(event_id!("$event:notareal.hs"))
@@ -869,12 +871,11 @@ mod tests {
                 .to_string(),
             "matrix:roomid/ruma:notareal.hs?via=notareal.hs&via=anotherunreal.hs&action=join"
         );
-        assert_eq!(
-            room_alias_id!("#ruma:notareal.hs")
-                .matrix_event_uri(event_id!("$event:notareal.hs"))
-                .to_string(),
-            "matrix:r/ruma:notareal.hs/e/event:notareal.hs"
-        );
+        #[allow(deprecated)]
+        let uri = room_alias_id!("#ruma:notareal.hs")
+            .matrix_event_uri(event_id!("$event:notareal.hs"))
+            .to_string();
+        assert_eq!(uri, "matrix:r/ruma:notareal.hs/e/event:notareal.hs");
         assert_eq!(
             room_id!("!ruma:notareal.hs")
                 .matrix_event_uri(event_id!("$event:notareal.hs"))

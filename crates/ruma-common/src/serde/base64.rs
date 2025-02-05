@@ -1,9 +1,9 @@
-//!Transparent base64 encoding / decoding as part of (de)serialization.
+//! Transparent base64 encoding / decoding as part of (de)serialization.
 
 use std::{fmt, marker::PhantomData};
 
 use base64::{
-    engine::{general_purpose, GeneralPurpose, GeneralPurposeConfig},
+    engine::{general_purpose, DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig},
     Engine,
 };
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
@@ -56,14 +56,15 @@ impl Base64Config for UrlSafe {
 }
 
 impl<C: Base64Config, B> Base64<C, B> {
-    // See https://github.com/matrix-org/matrix-spec/issues/838
-    const CONFIG: GeneralPurposeConfig =
-        general_purpose::NO_PAD.with_decode_allow_trailing_bits(true);
+    const CONFIG: GeneralPurposeConfig = general_purpose::NO_PAD
+        // See https://github.com/matrix-org/matrix-spec/issues/838
+        .with_decode_allow_trailing_bits(true)
+        .with_decode_padding_mode(DecodePaddingMode::Indifferent);
     const ENGINE: GeneralPurpose = GeneralPurpose::new(&C::CONF.0, Self::CONFIG);
 }
 
 impl<C: Base64Config, B: AsRef<[u8]>> Base64<C, B> {
-    /// Create a `Base64` instance from raw bytes, to be base64-encoded in serialialization.
+    /// Create a `Base64` instance from raw bytes, to be base64-encoded in serialization.
     pub fn new(bytes: B) -> Self {
         Self { bytes, _phantom_conf: PhantomData }
     }
@@ -155,6 +156,10 @@ mod tests {
     fn slightly_malformed_base64() {
         const INPUT: &str = "3UmJnEIzUr2xWyaUnJg5fXwRybwG5FVC6Gq\
             MHverEUn0ztuIsvVxX89JXX2pvdTsOBbLQx+4TVL02l4Cp5wPCm";
+        const INPUT_WITH_PADDING: &str = "im9+knCkMNQNh9o6sbdcZw==";
+
         Base64::<Standard>::parse(INPUT).unwrap();
+        Base64::<Standard>::parse(INPUT_WITH_PADDING)
+            .expect("We should be able to decode padded Base64");
     }
 }

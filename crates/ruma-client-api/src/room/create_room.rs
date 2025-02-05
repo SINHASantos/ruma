@@ -10,17 +10,17 @@ pub mod v3 {
     use assign::assign;
     use ruma_common::{
         api::{request, response, Metadata},
-        events::{
-            room::{
-                create::{PreviousRoom, RoomCreateEventContent},
-                power_levels::RoomPowerLevelsEventContent,
-            },
-            AnyInitialStateEvent,
-        },
         metadata,
         room::RoomType,
         serde::{Raw, StringEnum},
         OwnedRoomId, OwnedUserId, RoomVersionId,
+    };
+    use ruma_events::{
+        room::{
+            create::{PreviousRoom, RoomCreateEventContent},
+            power_levels::RoomPowerLevelsEventContent,
+        },
+        AnyInitialStateEvent,
     };
     use serde::{Deserialize, Serialize};
 
@@ -126,7 +126,7 @@ pub mod v3 {
     /// This is the same as the event content struct for `m.room.create`, but without some fields
     /// that servers are supposed to ignore.
     #[derive(Clone, Debug, Deserialize, Serialize)]
-    #[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+    #[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
     pub struct CreationContent {
         /// Whether users on other servers can join this room.
         ///
@@ -162,7 +162,7 @@ pub mod v3 {
             creator: OwnedUserId,
             room_version: RoomVersionId,
         ) -> RoomCreateEventContent {
-            assign!(RoomCreateEventContent::new(creator), {
+            assign!(RoomCreateEventContent::new_v1(creator), {
                 federate: self.federate,
                 room_version: room_version,
                 predecessor: self.predecessor,

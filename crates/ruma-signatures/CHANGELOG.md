@@ -1,5 +1,39 @@
 # [unreleased]
 
+# 0.17.0
+
+Improvements:
+
+- The `unstable-exhaustive-types` cargo feature was replaced by the
+  `ruma_unstable_exhaustive_types` compile-time `cfg` setting. Like all `cfg`
+  settings, it can be enabled at compile-time with the `RUSTFLAGS` environment
+  variable, or inside `.cargo/config.toml`. It can also be enabled by setting
+  the `RUMA_UNSTABLE_EXHAUSTIVE_TYPES` environment variable.
+
+# 0.16.0
+
+Upgrade `ruma-common` to 0.14.0.
+
+# 0.15.0
+
+No changes for this version
+
+# 0.14.0
+
+Breaking changes:
+
+- Update `ed25519-dalek` crate
+  - `Ed25519KeyPair::generate()` returns a `Zeroizing<Vec<u8>>` on success
+  - `Ed25519KeyPair::public_key()` returns an array instead of a slice
+
+Bug fixes:
+
+- Ignore keys with unknown algorithms in `verify_events`
+
+Improvements:
+
+- Remove `age_ts` from `REFERENCE_HASH_FIELDS_TO_REMOVE` according to a spec clarification
+
 # 0.13.1
 
 No changes for this version

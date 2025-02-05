@@ -3,23 +3,22 @@ name = "ruma"
 categories = ["api-bindings", "web-programming"]
 keywords = ["matrix", "chat", "messaging", "ruma"]
 description = "Types and traits for working with the Matrix protocol."
-homepage = "https://www.ruma.io/"
+homepage = "https://ruma.dev/"
 repository = "https://github.com/ruma/ruma"
 readme = "README.md"
 license = "MIT"
-version = "0.8.2"
+version = "0.12.1"
 edition = "2021"
-rust-version = "1.64"
+rust-version = { workspace = true }
 
 [package.metadata.docs.rs]
 all-features = true
-rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 api = ["ruma-common/api"]
-canonical-json = ["ruma-common/canonical-json"]
+canonical-json = ["ruma-common/canonical-json", "ruma-events?/canonical-json"]
 client = ["dep:ruma-client"]
-events = ["ruma-common/events"]
+events = ["dep:ruma-events"]
 server-util = ["dep:ruma-server-util"]
 signatures = ["dep:ruma-signatures", "canonical-json"]
 state-res = ["dep:ruma-state-res"]
@@ -28,9 +27,9 @@ state-res = ["dep:ruma-state-res"]
 client-ext-client-api = ["client", "ruma-client?/client-api"]
 client-hyper = ["client", "ruma-client?/hyper"]
 client-hyper-native-tls = ["client", "ruma-client?/hyper-native-tls"]
-client-isahc = ["client", "ruma-client?/isahc"]
 client-reqwest = ["client", "ruma-client?/reqwest"]
 client-reqwest-native-tls = ["client", "ruma-client?/reqwest-native-tls"]
+client-reqwest-native-tls-alpn = ["client", "ruma-client?/reqwest-native-tls-alpn"]
 client-reqwest-native-tls-vendored = ["client", "ruma-client?/reqwest-native-tls-vendored"]
 client-reqwest-rustls-manual-roots = ["client", "ruma-client?/reqwest-rustls-manual-roots"]
 client-reqwest-rustls-webpki-roots = ["client", "ruma-client?/reqwest-rustls-webpki-roots"]
@@ -69,7 +68,9 @@ js = ["ruma-common/js"]
 
 # Convenience features
 rand = ["ruma-common/rand"]
-markdown = ["ruma-common/markdown"]
+markdown = ["ruma-events?/markdown"]
+html = ["dep:ruma-html", "ruma-events?/html"]
+html-matrix = ["html", "ruma-html/matrix"]
 
 # Everything except compat, js and unstable features
 full = [
@@ -86,102 +87,165 @@ full = [
     "push-gateway-api",
     "rand",
     "markdown",
+    "html",
+    "html-matrix",
 ]
 
-# Increase compatibility with other parts of the Matrix ecosystem, at the
-# expense of weird behaviour where things deviate from the specification.
-#
-# For example, some mandatory string fields are defaulted to an empty string if
-# missing with this feature.
+# Enable all compatibility hacks. Deprecated.
 compat = [
-    "ruma-common/compat",
-    "ruma-client-api?/compat",
-    "ruma-federation-api?/compat",
+    "compat-server-signing-key-version",
+    "compat-empty-string-null",
+    "compat-null",
+    "compat-optional",
+    "compat-unset-avatar",
+    "compat-get-3pids",
+    "compat-signature-id",
+    "compat-tag-info",
 ]
+
+# Allow IDs to exceed 255 bytes.
+compat-arbitrary-length-ids = ["ruma-common/compat-arbitrary-length-ids"]
+
+# Don't validate `ServerSigningKeyVersion`.
+compat-server-signing-key-version = ["ruma-common/compat-server-signing-key-version"]
+
+# Allow some mandatory fields in requests / responses to be missing, defaulting
+# them to an empty string in deserialization.
+compat-empty-string-null = [
+    "ruma-common/compat-empty-string-null",
+    "ruma-client-api?/compat-empty-string-null",
+    "ruma-events?/compat-empty-string-null",
+    "ruma-federation-api?/compat-empty-string-null",
+]
+
+# Allow certain fields to be `null` for compatibility, treating that the same as
+# the field being absent.
+compat-null = ["ruma-common/compat-null"]
+
+# Allow certain fields to be absent even though the spec marks them as
+# mandatory. Deserialization will yield a default value like an empty string.
+compat-optional = [
+    "ruma-common/compat-optional",
+    "ruma-events?/compat-optional",
+]
+
+# Unset avatars by sending an empty string, same as what Element Web does, c.f.
+# https://github.com/matrix-org/matrix-spec/issues/378#issuecomment-1055831264
+compat-unset-avatar = ["ruma-client-api?/compat-unset-avatar"]
+
+# Always serialize the threepids response field in `get_3pids::v3::Response`,
+# even if its value is an empty list.
+compat-get-3pids = ["ruma-client-api?/compat-get-3pids"]
+
+# Accept `message` as an alias for `error` in `upload_signatures::v3::Failure`,
+# since that's what Synapse sends.
+compat-upload-signatures = ["ruma-client-api?/compat-upload-signatures"]
+
+# Allow extra characters in signature IDs not allowed in the specification.
+compat-signature-id = ["ruma-signatures?/compat-signature-id"]
+
+# Allow TagInfo to contain a stringified floating-point value for the `order` field.
+compat-tag-info = ["ruma-events?/compat-tag-info"]
+
+# Support encrypted stickers, as sent by several bridges.
+# https://github.com/matrix-org/matrix-spec/issues/1667
+compat-encrypted-stickers = ["ruma-events?/compat-encrypted-stickers"]
 
 # Specific compatibility for past ring public/private key documents.
 ring-compat = ["dep:ruma-signatures", "ruma-signatures?/ring-compat"]
 
 # unstable: by using any of these, you opt out of all semver guarantees Ruma
 #           otherwise provides!
-unstable-exhaustive-types = [
-    "ruma-common/unstable-exhaustive-types",
-    "ruma-appservice-api?/unstable-exhaustive-types",
-    "ruma-client-api?/unstable-exhaustive-types",
-    "ruma-federation-api?/unstable-exhaustive-types",
-    "ruma-identity-service-api?/unstable-exhaustive-types",
-    "ruma-push-gateway-api?/unstable-exhaustive-types",
-    "ruma-state-res?/unstable-exhaustive-types"
-]
 unstable-extensible-events = [
     "unstable-msc3246",
     "unstable-msc3488",
     "unstable-msc3553",
+    "unstable-msc3954",
+    "unstable-msc3955",
 ]
-unstable-msc1767 = ["ruma-common/unstable-msc1767"]
-unstable-msc2246 = ["ruma-client-api?/unstable-msc2246"]
-unstable-msc2409 = ["ruma-appservice-api?/unstable-msc2409"]
+unstable-msc1767 = ["ruma-events?/unstable-msc1767"]
 unstable-msc2448 = [
     "ruma-client-api?/unstable-msc2448",
-    "ruma-common/unstable-msc2448",
+    "ruma-events?/unstable-msc2448",
     "ruma-federation-api?/unstable-msc2448"
 ]
+unstable-msc2545 = ["ruma-events?/unstable-msc2545"]
 unstable-msc2654 = ["ruma-client-api?/unstable-msc2654"]
 unstable-msc2666 = ["ruma-client-api?/unstable-msc2666"]
-unstable-msc2677 = [
-    "ruma-client-api?/unstable-msc2677",
-    "ruma-common/unstable-msc2677",
-]
-unstable-msc2746 = ["ruma-common/unstable-msc2746"]
+unstable-msc2747 = ["ruma-events?/unstable-msc2747"]
+unstable-msc2867 = ["ruma-events?/unstable-msc2867"]
 unstable-msc2870 = ["ruma-common/unstable-msc2870"]
 unstable-msc2965 = ["ruma-client-api?/unstable-msc2965"]
 unstable-msc2967 = ["ruma-client-api?/unstable-msc2967"]
+unstable-msc3061 = ["ruma-events?/unstable-msc3061"]
 unstable-msc3202 = ["ruma-appservice-api?/unstable-msc3202"]
-unstable-msc3245 = ["ruma-common/unstable-msc3245"]
-unstable-msc3246 = ["ruma-common/unstable-msc3246"]
-unstable-msc3381 = ["ruma-common/unstable-msc3381"]
-unstable-msc3488 = [
-    "ruma-client-api?/unstable-msc3488",
-    "ruma-common/unstable-msc3488",
-]
-unstable-msc3551 = ["ruma-common/unstable-msc3551"]
-unstable-msc3552 = ["ruma-common/unstable-msc3552"]
-unstable-msc3553 = ["ruma-common/unstable-msc3553"]
-unstable-msc3554 = ["ruma-common/unstable-msc3554"]
+unstable-msc3245 = ["ruma-events?/unstable-msc3245"]
+# Support the m.room.message fallback fields from the first version of MSC3245,
+# implemented in Element Web and documented at
+# https://github.com/matrix-org/matrix-spec-proposals/blob/83f6c5b469c1d78f714e335dcaa25354b255ffa5/proposals/3245-voice-messages.md
+unstable-msc3245-v1-compat = ["ruma-events?/unstable-msc3245-v1-compat"]
+unstable-msc3246 = ["ruma-events?/unstable-msc3246"]
+unstable-msc3266 = ["ruma-client-api?/unstable-msc3266"]
+unstable-msc3381 = ["ruma-events?/unstable-msc3381"]
+unstable-msc3401 = ["ruma-events?/unstable-msc3401"]
+unstable-msc3488 = ["ruma-client-api?/unstable-msc3488", "ruma-events?/unstable-msc3488"]
+unstable-msc3489 = ["ruma-events?/unstable-msc3489"]
+unstable-msc3551 = ["ruma-events?/unstable-msc3551"]
+unstable-msc3552 = ["ruma-events?/unstable-msc3552"]
+unstable-msc3553 = ["ruma-events?/unstable-msc3553"]
+unstable-msc3554 = ["ruma-events?/unstable-msc3554"]
 unstable-msc3575 = ["ruma-client-api?/unstable-msc3575"]
 unstable-msc3618 = ["ruma-federation-api?/unstable-msc3618"]
 unstable-msc3723 = ["ruma-federation-api?/unstable-msc3723"]
+unstable-msc3814 = ["ruma-client-api?/unstable-msc3814"]
+unstable-msc3824 = ["ruma-client-api?/unstable-msc3824"]
+unstable-msc3843 = ["ruma-client-api?/unstable-msc3843", "ruma-federation-api?/unstable-msc3843"]
+unstable-msc3927 = ["ruma-events?/unstable-msc3927"]
+unstable-msc3930 = ["ruma-common/unstable-msc3930"]
 unstable-msc3931 = ["ruma-common/unstable-msc3931"]
 unstable-msc3932 = ["ruma-common/unstable-msc3932"]
-unstable-pdu = ["ruma-common/unstable-pdu"]
-unstable-sanitize = ["ruma-common/unstable-sanitize"]
+unstable-msc3954 = ["ruma-events?/unstable-msc3954"]
+unstable-msc3955 = ["ruma-events?/unstable-msc3955"]
+unstable-msc3956 = ["ruma-events?/unstable-msc3956"]
+unstable-msc3983 = ["ruma-client-api?/unstable-msc3983"]
+unstable-msc4075 = ["ruma-events?/unstable-msc4075"]
+unstable-msc4095 = ["ruma-events?/unstable-msc4095"]
+unstable-msc4108 = ["ruma-client-api?/unstable-msc4108"]
+unstable-msc4121 = ["ruma-client-api?/unstable-msc4121"]
+unstable-msc4125 = ["ruma-federation-api?/unstable-msc4125"]
+unstable-msc4140 = ["ruma-client-api?/unstable-msc4140"]
+unstable-msc4171 = ["ruma-events?/unstable-msc4171"]
+unstable-msc4186 = ["ruma-client-api?/unstable-msc4186"]
+unstable-msc4203 = ["ruma-appservice-api?/unstable-msc4203"]
+unstable-msc4230 = ["ruma-events?/unstable-msc4230"]
+unstable-pdu = ["ruma-events?/unstable-pdu"]
 unstable-unspecified = [
     "ruma-common/unstable-unspecified",
     "ruma-federation-api?/unstable-unspecified",
-    "ruma-push-gateway-api?/unstable-unspecified",
 ]
 
-# Private feature, only used in test / benchmarking code
-__ci = [
-    "full",
-    "unstable-unspecified",
-    "unstable-sanitize",
+# Private features, only used in test / benchmarking code
+__unstable-mscs = [
     "unstable-msc1767",
-    "unstable-msc2246",
-    "unstable-msc2409",
     "unstable-msc2448",
+    "unstable-msc2545",
     "unstable-msc2654",
     "unstable-msc2666",
-    "unstable-msc2677",
-    "unstable-msc2746",
+    "unstable-msc2747",
+    "unstable-msc2867",
     "unstable-msc2870",
     "unstable-msc2965",
     "unstable-msc2967",
+    "unstable-msc3061",
     "unstable-msc3202",
     "unstable-msc3245",
+    "unstable-msc3245-v1-compat",
     "unstable-msc3246",
+    "unstable-msc3266",
     "unstable-msc3381",
+    "unstable-msc3401",
     "unstable-msc3488",
+    "unstable-msc3489",
     "unstable-msc3551",
     "unstable-msc3552",
     "unstable-msc3553",
@@ -189,17 +253,46 @@ __ci = [
     "unstable-msc3575",
     "unstable-msc3618",
     "unstable-msc3723",
+    "unstable-msc3814",
+    "unstable-msc3824",
+    "unstable-msc3843",
+    "unstable-msc3927",
+    "unstable-msc3930",
+    "unstable-msc3931",
     "unstable-msc3932",
+    "unstable-msc3954",
+    "unstable-msc3955",
+    "unstable-msc3956",
+    "unstable-msc3983",
+    "unstable-msc4075",
+    "unstable-msc4095",
+    "unstable-msc4108",
+    "unstable-msc4121",
+    "unstable-msc4125",
+    "unstable-msc4140",
+    "unstable-msc4171",
+    "unstable-msc4186",
+    "unstable-msc4203",
+    "unstable-msc4230",
+]
+__ci = [
+    "full",
+    "compat-upload-signatures",
+    "__unstable-mscs",
+    "unstable-unspecified",
 ]
 
 [dependencies]
 assign = { workspace = true }
 js_int = { workspace = true }
 js_option = "0.1.1"
+web-time = { workspace = true }
 
 ruma-common = { workspace = true }
 
 ruma-client = { workspace = true, optional = true }
+ruma-events = { workspace = true, optional = true }
+ruma-html = { workspace = true, optional = true }
 ruma-server-util = { workspace = true, optional = true }
 ruma-signatures = { workspace = true, optional = true }
 ruma-state-res = { workspace = true, optional = true }
@@ -212,3 +305,6 @@ ruma-push-gateway-api = { workspace = true, optional = true }
 
 [dev-dependencies]
 serde = { workspace = true }
+
+[lints]
+workspace = true

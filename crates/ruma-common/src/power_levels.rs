@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 /// The power level requirements for specific notification types.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct NotificationPowerLevels {
     /// The level required to trigger an `@room` notification.
     #[serde(
@@ -31,7 +31,8 @@ impl NotificationPowerLevels {
         }
     }
 
-    pub(crate) fn is_default(&self) -> bool {
+    /// Whether all fields have their default values.
+    pub fn is_default(&self) -> bool {
         self.room == default_power_level()
     }
 }

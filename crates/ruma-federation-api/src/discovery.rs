@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 
 use ruma_common::{
     serde::Base64, MilliSecondsSinceUnixEpoch, OwnedServerName, OwnedServerSigningKeyId,
+    ServerSignatures,
 };
 use serde::{Deserialize, Serialize};
 
@@ -17,7 +18,7 @@ pub mod get_server_versions;
 
 /// Public key of the homeserver for verifying digital signatures.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct VerifyKey {
     /// The unpadded base64-encoded key.
     pub key: Base64,
@@ -32,7 +33,7 @@ impl VerifyKey {
 
 /// A key the server used to use, but stopped using.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct OldVerifyKey {
     /// Timestamp when this key expired.
     pub expired_ts: MilliSecondsSinceUnixEpoch,
@@ -48,10 +49,9 @@ impl OldVerifyKey {
     }
 }
 
-// Spec is wrong, all fields are required (see https://github.com/matrix-org/matrix-spec/issues/613)
 /// Queried server key, signed by the notary server.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct ServerSigningKeys {
     /// DNS name of the homeserver.
     pub server_name: OwnedServerName,
@@ -60,12 +60,15 @@ pub struct ServerSigningKeys {
     pub verify_keys: BTreeMap<OwnedServerSigningKeyId, VerifyKey>,
 
     /// Public keys that the homeserver used to use and when it stopped using them.
+    // This field is optional, but all fields were assumed to be required before clarification
+    // in https://github.com/matrix-org/matrix-spec/pull/1930, so we still send it.
+    #[serde(default)]
     pub old_verify_keys: BTreeMap<OwnedServerSigningKeyId, OldVerifyKey>,
 
     /// Digital signatures of this object signed using the verify_keys.
     ///
     /// Map of server name to keys by key ID.
-    pub signatures: BTreeMap<OwnedServerName, BTreeMap<OwnedServerSigningKeyId, String>>,
+    pub signatures: ServerSignatures,
 
     /// Timestamp when the keys should be refreshed.
     ///
@@ -82,7 +85,7 @@ impl ServerSigningKeys {
             server_name,
             verify_keys: BTreeMap::new(),
             old_verify_keys: BTreeMap::new(),
-            signatures: BTreeMap::new(),
+            signatures: ServerSignatures::default(),
             valid_until_ts,
         }
     }

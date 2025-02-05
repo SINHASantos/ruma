@@ -2,7 +2,7 @@
 //! converting between http requests / responses and ruma's representation of
 //! matrix API requests / responses.
 
-use std::{error::Error as StdError, fmt, sync::Arc};
+use std::{error::Error as StdError, fmt, num::ParseIntError, sync::Arc};
 
 use bytes::{BufMut, Bytes};
 use serde_json::{from_slice as from_json_slice, Value as JsonValue};
@@ -70,7 +70,6 @@ pub enum MatrixErrorBody {
     Json(JsonValue),
 
     /// A response body that is not valid JSON.
-    #[non_exhaustive]
     NotJson {
         /// The raw bytes of the response body.
         bytes: Bytes,
@@ -114,7 +113,10 @@ pub enum IntoHttpError {
 
     /// Tried to create a request with [`MatrixVersion`]s for all of which this endpoint was
     /// removed.
-    #[error("could not create any path variant for endpoint, as it was removed in version {0}")]
+    #[error(
+        "could not create any path variant for endpoint, as it was removed in version {}",
+        .0.as_str().expect("no endpoint was removed in Matrix 1.0")
+    )]
     EndpointRemoved(MatrixVersion),
 
     /// JSON serialization failed.
@@ -127,11 +129,17 @@ pub enum IntoHttpError {
 
     /// Header serialization failed.
     #[error("header serialization failed: {0}")]
-    Header(#[from] http::header::InvalidHeaderValue),
+    Header(#[from] HeaderSerializationError),
 
     /// HTTP request construction failed.
     #[error("HTTP request construction failed: {0}")]
     Http(#[from] http::Error),
+}
+
+impl From<http::header::InvalidHeaderValue> for IntoHttpError {
+    fn from(value: http::header::InvalidHeaderValue) -> Self {
+        Self::Header(value.into())
+    }
 }
 
 /// An error when converting a http request to one of ruma's endpoint-specific request types.
@@ -237,6 +245,10 @@ pub enum DeserializationError {
     /// Header value deserialization failed.
     #[error(transparent)]
     Header(#[from] HeaderDeserializationError),
+
+    /// Deserialization of `multipart/mixed` response failed.
+    #[error(transparent)]
+    MultipartMixed(#[from] MultipartMixedDeserializationError),
 }
 
 impl From<std::convert::Infallible> for DeserializationError {
@@ -251,22 +263,84 @@ impl From<http::header::ToStrError> for DeserializationError {
     }
 }
 
-/// An error with the http headers.
+/// An error when deserializing the HTTP headers.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum HeaderDeserializationError {
     /// Failed to convert `http::header::HeaderValue` to `str`.
     #[error("{0}")]
-    ToStrError(http::header::ToStrError),
+    ToStrError(#[from] http::header::ToStrError),
+
+    /// Failed to convert `http::header::HeaderValue` to an integer.
+    #[error("{0}")]
+    ParseIntError(#[from] ParseIntError),
+
+    /// Failed to parse a HTTP date from a `http::header::Value`.
+    #[error("failed to parse HTTP date")]
+    InvalidHttpDate,
 
     /// The given required header is missing.
     #[error("missing header `{0}`")]
     MissingHeader(String),
+
+    /// The given header failed to parse.
+    #[error("invalid header: {0}")]
+    InvalidHeader(Box<dyn std::error::Error + Send + Sync + 'static>),
+
+    /// A header was received with a unexpected value.
+    #[error(
+        "The {header} header was received with an unexpected value, \
+         expected {expected}, received {unexpected}"
+    )]
+    InvalidHeaderValue {
+        /// The name of the header containing the invalid value.
+        header: String,
+        /// The value the header should have been set to.
+        expected: String,
+        /// The value we instead received and rejected.
+        unexpected: String,
+    },
+
+    /// The `Content-Type` header for a `multipart/mixed` response is missing the `boundary`
+    /// attribute.
+    #[error(
+        "The `Content-Type` header for a `multipart/mixed` response is missing the `boundary` attribute"
+    )]
+    MissingMultipartBoundary,
+}
+
+/// An error when deserializing a `multipart/mixed` response.
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum MultipartMixedDeserializationError {
+    /// There were not the number of body parts that were expected.
+    #[error(
+        "multipart/mixed response does not have enough body parts, \
+         expected {expected}, found {found}"
+    )]
+    MissingBodyParts {
+        /// The number of body parts expected in the response.
+        expected: usize,
+        /// The number of body parts found in the received response.
+        found: usize,
+    },
+
+    /// The separator between the headers and the content of a body part is missing.
+    #[error("multipart/mixed body part is missing separator between headers and content")]
+    MissingBodyPartInnerSeparator,
+
+    /// The separator between a header's name and value is missing.
+    #[error("multipart/mixed body part header is missing separator between name and value")]
+    MissingHeaderSeparator,
+
+    /// A header failed to parse.
+    #[error("invalid multipart/mixed header: {0}")]
+    InvalidHeader(Box<dyn std::error::Error + Send + Sync + 'static>),
 }
 
 /// An error that happens when Ruma cannot understand a Matrix version.
 #[derive(Debug)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct UnknownVersionError;
 
 impl fmt::Display for UnknownVersionError {
@@ -280,7 +354,7 @@ impl StdError for UnknownVersionError {}
 /// An error that happens when an incorrect amount of arguments have been passed to PathData parts
 /// formatting.
 #[derive(Debug)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct IncorrectArgumentCount {
     /// The expected amount of arguments.
     pub expected: usize,
@@ -296,3 +370,19 @@ impl fmt::Display for IncorrectArgumentCount {
 }
 
 impl StdError for IncorrectArgumentCount {}
+
+/// An error when serializing the HTTP headers.
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum HeaderSerializationError {
+    /// Failed to convert a header value to `http::header::HeaderValue`.
+    #[error(transparent)]
+    ToHeaderValue(#[from] http::header::InvalidHeaderValue),
+
+    /// The `SystemTime` could not be converted to a HTTP date.
+    ///
+    /// This only happens if the `SystemTime` provided is too far in the past (before the Unix
+    /// epoch) or the future (after the year 9999).
+    #[error("invalid HTTP date")]
+    InvalidHttpDate,
+}

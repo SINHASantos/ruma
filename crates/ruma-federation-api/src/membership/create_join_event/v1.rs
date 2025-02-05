@@ -15,11 +15,13 @@ const METADATA: Metadata = metadata! {
     authentication: ServerSignatures,
     history: {
         1.0 => "/_matrix/federation/v1/send_join/:room_id/:event_id",
+        1.0 => deprecated,
     }
 };
 
 /// Request type for the `create_join_event` endpoint.
 #[request]
+#[deprecated = "Since Matrix Server-Server API r0.1.4. Use the v2 endpoint instead."]
 pub struct Request {
     /// The room ID that is about to be joined.
     ///
@@ -38,6 +40,7 @@ pub struct Request {
 
 /// Response type for the `create_join_event` endpoint.
 #[response]
+#[deprecated = "Since Matrix Server-Server API r0.1.4. Use the v2 endpoint instead."]
 pub struct Response {
     /// Full state and auth chain of the room prior to the join event.
     #[ruma_api(body)]
@@ -45,6 +48,7 @@ pub struct Response {
     pub room_state: RoomState,
 }
 
+#[allow(deprecated)]
 impl Request {
     /// Creates a new `Request` from the given room ID, event ID and PDU.
     pub fn new(room_id: OwnedRoomId, event_id: OwnedEventId, pdu: Box<RawJsonValue>) -> Self {
@@ -52,6 +56,7 @@ impl Request {
     }
 }
 
+#[allow(deprecated)]
 impl Response {
     /// Creates a new `Response` with the given room state.
     pub fn new(room_state: RoomState) -> Self {
@@ -60,13 +65,9 @@ impl Response {
 }
 
 /// Full state of the room.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct RoomState {
-    #[cfg(not(feature = "unstable-unspecified"))]
-    /// The resident server's DNS name.
-    pub origin: String,
-
     /// The full set of authorization events that make up the state of the room,
     /// and their authorization events, recursively.
     pub auth_chain: Vec<Box<RawJsonValue>>,
@@ -82,49 +83,9 @@ pub struct RoomState {
     pub event: Option<Box<RawJsonValue>>,
 }
 
-#[cfg(feature = "unstable-unspecified")]
-impl Default for RoomState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl RoomState {
-    #[cfg(not(feature = "unstable-unspecified"))]
-    /// Creates an empty `RoomState` with the given `origin`.
-    ///
-    /// With the `unstable-unspecified` feature, this method doesn't take any parameters.
-    /// See [matrix-spec#374](https://github.com/matrix-org/matrix-spec/issues/374).
-    pub fn new(origin: String) -> Self {
-        Self { origin, auth_chain: Vec::new(), state: Vec::new(), event: None }
-    }
-
-    #[cfg(feature = "unstable-unspecified")]
-    /// Creates an empty `RoomState` with the given `origin`.
-    ///
-    /// Without the `unstable-unspecified` feature, this method takes a parameter for the origin.
-    /// See [matrix-spec#374](https://github.com/matrix-org/matrix-spec/issues/374).
+    /// Creates an empty `RoomState`.
     pub fn new() -> Self {
-        Self { auth_chain: Vec::new(), state: Vec::new(), event: None }
-    }
-}
-
-#[cfg(all(test, feature = "server", not(feature = "unstable-unspecified")))]
-mod tests {
-    use ruma_common::api::OutgoingResponse;
-    use serde_json::{from_slice as from_json_slice, json, Value as JsonValue};
-
-    use super::{Response, RoomState};
-
-    #[test]
-    fn response_body() {
-        let res = Response::new(RoomState::new("ORIGIN".to_owned()))
-            .try_into_http_response::<Vec<u8>>()
-            .unwrap();
-
-        assert_eq!(
-            from_json_slice::<JsonValue>(res.body()).unwrap(),
-            json!([200, { "auth_chain": [], "origin": "ORIGIN", "state": [] }])
-        );
+        Self::default()
     }
 }

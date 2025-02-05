@@ -11,11 +11,11 @@ pub mod v3 {
 
     use ruma_common::{
         api::{response, Metadata},
-        events::{AnyStateEventContent, StateEventContent, StateEventType},
         metadata,
         serde::Raw,
         MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedRoomId,
     };
+    use ruma_events::{AnyStateEventContent, StateEventContent, StateEventType};
     use serde_json::value::to_raw_value as to_raw_json_value;
 
     const METADATA: Metadata = metadata! {
@@ -30,7 +30,7 @@ pub mod v3 {
 
     /// Request type for the `send_state_event` endpoint.
     #[derive(Clone, Debug)]
-    #[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+    #[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
     pub struct Request {
         /// The room to set the state in.
         pub room_id: OwnedRoomId,
@@ -201,7 +201,7 @@ pub mod v3 {
     struct RequestQuery {
         /// Timestamp to use for the `origin_server_ts` of the event.
         #[serde(rename = "ts", skip_serializing_if = "Option::is_none")]
-        pub timestamp: Option<MilliSecondsSinceUnixEpoch>,
+        timestamp: Option<MilliSecondsSinceUnixEpoch>,
     }
 
     #[cfg(feature = "client")]
@@ -209,15 +209,15 @@ pub mod v3 {
     fn serialize() {
         use ruma_common::{
             api::{MatrixVersion, OutgoingRequest as _, SendAccessToken},
-            events::{room::name::RoomNameEventContent, EmptyStateKey},
-            room_id,
+            owned_room_id,
         };
+        use ruma_events::{room::name::RoomNameEventContent, EmptyStateKey};
 
         // This used to panic in make_endpoint_url because of a mismatch in the path parameter count
         let req = Request::new(
-            room_id!("!room:server.tld").to_owned(),
+            owned_room_id!("!room:server.tld"),
             &EmptyStateKey,
-            &RoomNameEventContent::new(Some("Test room".to_owned())),
+            &RoomNameEventContent::new("Test room".to_owned()),
         )
         .unwrap()
         .try_into_http_request::<Vec<u8>>(

@@ -14,7 +14,7 @@ use super::IdParseError;
 ///
 /// ```
 /// # use ruma_common::RoomVersionId;
-/// assert_eq!(RoomVersionId::try_from("1").unwrap().as_ref(), "1");
+/// assert_eq!(RoomVersionId::try_from("1").unwrap().as_str(), "1");
 /// ```
 ///
 /// Any string consisting of at minimum 1, at maximum 32 unicode codepoints is a room version ID.
@@ -24,7 +24,7 @@ use super::IdParseError;
 ///
 /// [room version]: https://spec.matrix.org/latest/rooms/
 #[derive(Clone, Debug, PartialEq, Eq, Hash, DisplayAsRefStr)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub enum RoomVersionId {
     /// A version 1 room.
     V1,
@@ -56,6 +56,9 @@ pub enum RoomVersionId {
     /// A version 10 room.
     V10,
 
+    /// A version 11 room.
+    V11,
+
     #[doc(hidden)]
     _Custom(CustomRoomVersion),
 }
@@ -76,6 +79,7 @@ impl RoomVersionId {
             Self::V8 => "8",
             Self::V9 => "9",
             Self::V10 => "10",
+            Self::V11 => "11",
             Self::_Custom(version) => version.as_str(),
         }
     }
@@ -99,6 +103,7 @@ impl From<RoomVersionId> for String {
             RoomVersionId::V8 => "8".to_owned(),
             RoomVersionId::V9 => "9".to_owned(),
             RoomVersionId::V10 => "10".to_owned(),
+            RoomVersionId::V11 => "11".to_owned(),
             RoomVersionId::_Custom(version) => version.into(),
         }
     }
@@ -110,6 +115,12 @@ impl AsRef<str> for RoomVersionId {
     }
 }
 
+impl AsRef<[u8]> for RoomVersionId {
+    fn as_ref(&self) -> &[u8] {
+        self.as_bytes()
+    }
+}
+
 impl PartialOrd for RoomVersionId {
     /// Compare the two given room version IDs by comparing their string representations.
     ///
@@ -117,7 +128,7 @@ impl PartialOrd for RoomVersionId {
     /// specification. This implementation only exists to be able to use `RoomVersionId`s or
     /// types containing `RoomVersionId`s as `BTreeMap` keys.
     fn partial_cmp(&self, other: &RoomVersionId) -> Option<Ordering> {
-        self.as_ref().partial_cmp(other.as_ref())
+        Some(self.cmp(other))
     }
 }
 
@@ -128,7 +139,7 @@ impl Ord for RoomVersionId {
     /// specification. This implementation only exists to be able to use `RoomVersionId`s or
     /// types containing `RoomVersionId`s as `BTreeMap` keys.
     fn cmp(&self, other: &Self) -> Ordering {
-        self.as_ref().cmp(other.as_ref())
+        self.as_str().cmp(other.as_str())
     }
 }
 
@@ -137,7 +148,7 @@ impl Serialize for RoomVersionId {
     where
         S: Serializer,
     {
-        serializer.serialize_str(self.as_ref())
+        serializer.serialize_str(self.as_str())
     }
 }
 
@@ -166,6 +177,7 @@ where
         "8" => RoomVersionId::V8,
         "9" => RoomVersionId::V9,
         "10" => RoomVersionId::V10,
+        "11" => RoomVersionId::V11,
         custom => {
             ruma_identifiers_validation::room_version_id::validate(custom)?;
             RoomVersionId::_Custom(CustomRoomVersion(room_version_id.into()))
@@ -225,6 +237,7 @@ impl PartialEq<RoomVersionId> for String {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 #[doc(hidden)]
+#[allow(unknown_lints, unnameable_types)]
 pub struct CustomRoomVersion(Box<str>);
 
 #[doc(hidden)]
@@ -257,7 +270,7 @@ mod tests {
     #[test]
     fn valid_version_1_room_version_id() {
         assert_eq!(
-            RoomVersionId::try_from("1").expect("Failed to create RoomVersionId.").as_ref(),
+            RoomVersionId::try_from("1").expect("Failed to create RoomVersionId.").as_str(),
             "1"
         );
     }
@@ -265,7 +278,7 @@ mod tests {
     #[test]
     fn valid_version_2_room_version_id() {
         assert_eq!(
-            RoomVersionId::try_from("2").expect("Failed to create RoomVersionId.").as_ref(),
+            RoomVersionId::try_from("2").expect("Failed to create RoomVersionId.").as_str(),
             "2"
         );
     }
@@ -273,7 +286,7 @@ mod tests {
     #[test]
     fn valid_version_3_room_version_id() {
         assert_eq!(
-            RoomVersionId::try_from("3").expect("Failed to create RoomVersionId.").as_ref(),
+            RoomVersionId::try_from("3").expect("Failed to create RoomVersionId.").as_str(),
             "3"
         );
     }
@@ -281,7 +294,7 @@ mod tests {
     #[test]
     fn valid_version_4_room_version_id() {
         assert_eq!(
-            RoomVersionId::try_from("4").expect("Failed to create RoomVersionId.").as_ref(),
+            RoomVersionId::try_from("4").expect("Failed to create RoomVersionId.").as_str(),
             "4"
         );
     }
@@ -289,7 +302,7 @@ mod tests {
     #[test]
     fn valid_version_5_room_version_id() {
         assert_eq!(
-            RoomVersionId::try_from("5").expect("Failed to create RoomVersionId.").as_ref(),
+            RoomVersionId::try_from("5").expect("Failed to create RoomVersionId.").as_str(),
             "5"
         );
     }
@@ -297,7 +310,7 @@ mod tests {
     #[test]
     fn valid_version_6_room_version_id() {
         assert_eq!(
-            RoomVersionId::try_from("6").expect("Failed to create RoomVersionId.").as_ref(),
+            RoomVersionId::try_from("6").expect("Failed to create RoomVersionId.").as_str(),
             "6"
         );
     }
@@ -305,7 +318,7 @@ mod tests {
     #[test]
     fn valid_custom_room_version_id() {
         assert_eq!(
-            RoomVersionId::try_from("io.ruma.1").expect("Failed to create RoomVersionId.").as_ref(),
+            RoomVersionId::try_from("io.ruma.1").expect("Failed to create RoomVersionId.").as_str(),
             "io.ruma.1"
         );
     }

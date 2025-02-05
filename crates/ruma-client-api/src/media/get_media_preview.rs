@@ -21,11 +21,16 @@ pub mod v3 {
         history: {
             1.0 => "/_matrix/media/r0/preview_url",
             1.1 => "/_matrix/media/v3/preview_url",
+            1.11 => deprecated,
         }
     };
 
     /// Request type for the `get_media_preview` endpoint.
     #[request(error = crate::Error)]
+    #[deprecated = "\
+      Since Matrix 1.11, clients should use `authenticated_media::get_media_preview::v1::Request` \
+      instead if the homeserver supports it.\
+    "]
     pub struct Request {
         /// URL to get a preview of.
         #[ruma_api(query)]
@@ -33,7 +38,8 @@ pub mod v3 {
 
         /// Preferred point in time (in milliseconds) to return a preview for.
         #[ruma_api(query)]
-        pub ts: MilliSecondsSinceUnixEpoch,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub ts: Option<MilliSecondsSinceUnixEpoch>,
     }
 
     /// Response type for the `get_media_preview` endpoint.
@@ -48,10 +54,11 @@ pub mod v3 {
         pub data: Option<Box<RawJsonValue>>,
     }
 
+    #[allow(deprecated)]
     impl Request {
-        /// Creates a new `Request` with the given url and timestamp.
-        pub fn new(url: String, ts: MilliSecondsSinceUnixEpoch) -> Self {
-            Self { url, ts }
+        /// Creates a new `Request` with the given url.
+        pub fn new(url: String) -> Self {
+            Self { url, ts: None }
         }
     }
 
@@ -76,7 +83,7 @@ pub mod v3 {
 
     #[cfg(test)]
     mod tests {
-        use assert_matches::assert_matches;
+        use assert_matches2::assert_matches;
         use serde_json::{
             from_value as from_json_value, json,
             value::{to_raw_value as to_raw_json_value, RawValue as RawJsonValue},

@@ -5,18 +5,18 @@ use std::collections::BTreeMap;
 use js_int::UInt;
 use ruma_common::{
     encryption::{CrossSigningKey, DeviceKeys},
-    events::{receipt::Receipt, AnyToDeviceEventContent, ToDeviceEventType},
     presence::PresenceState,
     serde::{from_raw_json_value, Raw},
     to_device::DeviceIdOrAllDevices,
     OwnedDeviceId, OwnedEventId, OwnedRoomId, OwnedTransactionId, OwnedUserId,
 };
+use ruma_events::{receipt::Receipt, AnyToDeviceEventContent, ToDeviceEventType};
 use serde::{de, Deserialize, Serialize};
 use serde_json::{value::RawValue as RawJsonValue, Value as JsonValue};
 
 /// Type for passing ephemeral data to homeservers.
 #[derive(Clone, Debug, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 #[serde(tag = "edu_type", content = "content")]
 pub enum Edu {
     /// An EDU representing presence updates for users of the sending homeserver.
@@ -81,7 +81,7 @@ impl<'de> Deserialize<'de> for Edu {
 
 /// The content for "m.presence" Edu.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct PresenceContent {
     /// A list of presence updates that the receiving server is likely to be interested in.
     pub push: Vec<PresenceUpdate>,
@@ -96,7 +96,7 @@ impl PresenceContent {
 
 /// An update to the presence of a user.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct PresenceUpdate {
     /// The user ID this presence EDU is for.
     pub user_id: OwnedUserId,
@@ -133,7 +133,7 @@ impl PresenceUpdate {
 
 /// The content for "m.receipt" Edu.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct ReceiptContent {
     /// Receipts for a particular room.
     #[serde(flatten)]
@@ -149,7 +149,7 @@ impl ReceiptContent {
 
 /// Mapping between user and `ReceiptData`.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct ReceiptMap {
     /// Read receipts for users in the room.
     #[serde(rename = "m.read")]
@@ -165,7 +165,7 @@ impl ReceiptMap {
 
 /// Metadata about the event that was last read and when.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct ReceiptData {
     /// Metadata for the read receipt.
     pub data: Receipt,
@@ -183,7 +183,7 @@ impl ReceiptData {
 
 /// The content for "m.typing" Edu.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct TypingContent {
     /// The room where the user's typing status has been updated.
     pub room_id: OwnedRoomId,
@@ -204,7 +204,7 @@ impl TypingContent {
 
 /// The description of the direct-to- device message.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct DeviceListUpdateContent {
     /// The user ID who owns the device.
     pub user_id: OwnedUserId,
@@ -253,7 +253,7 @@ impl DeviceListUpdateContent {
 
 /// The description of the direct-to- device message.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct DirectDeviceContent {
     /// The user ID of the sender.
     pub sender: OwnedUserId,
@@ -291,7 +291,7 @@ pub type DirectDeviceMessages =
 
 /// The content for an `m.signing_key_update` EDU.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct SigningKeyUpdateContent {
     /// The user ID whose cross-signing keys have changed.
     pub user_id: OwnedUserId,
@@ -313,13 +313,14 @@ impl SigningKeyUpdateContent {
 }
 
 #[cfg(test)]
-mod test {
-    use assert_matches::assert_matches;
+mod tests {
+    use assert_matches2::assert_matches;
     use js_int::uint;
     use ruma_common::{room_id, user_id};
+    use ruma_events::ToDeviceEventType;
     use serde_json::json;
 
-    use super::*;
+    use super::{DeviceListUpdateContent, Edu, ReceiptContent};
 
     #[test]
     fn device_list_update_edu() {
@@ -352,17 +353,17 @@ mod test {
         });
 
         let edu = serde_json::from_value::<Edu>(json.clone()).unwrap();
-        let DeviceListUpdateContent {
-            user_id,
-            device_id,
-            device_display_name,
-            stream_id,
-            prev_id,
-            deleted,
-            keys,
-        } = assert_matches!(
+        assert_matches!(
             &edu,
-            Edu::DeviceListUpdate(u) => u
+            Edu::DeviceListUpdate(DeviceListUpdateContent {
+                user_id,
+                device_id,
+                device_display_name,
+                stream_id,
+                prev_id,
+                deleted,
+                keys,
+            })
         );
 
         assert_eq!(user_id, "@john:example.com");
@@ -388,17 +389,17 @@ mod test {
         });
 
         let edu = serde_json::from_value::<Edu>(json.clone()).unwrap();
-        let DeviceListUpdateContent {
-            user_id,
-            device_id,
-            device_display_name,
-            stream_id,
-            prev_id,
-            deleted,
-            keys,
-        } = assert_matches!(
+        assert_matches!(
             &edu,
-            Edu::DeviceListUpdate(u) => u
+            Edu::DeviceListUpdate(DeviceListUpdateContent {
+                user_id,
+                device_id,
+                device_display_name,
+                stream_id,
+                prev_id,
+                deleted,
+                keys,
+            })
         );
 
         assert_eq!(user_id, "@john:example.com");
@@ -433,10 +434,7 @@ mod test {
         });
 
         let edu = serde_json::from_value::<Edu>(json.clone()).unwrap();
-        let receipts = assert_matches!(
-            &edu,
-            Edu::Receipt(ReceiptContent { receipts }) => receipts
-        );
+        assert_matches!(&edu, Edu::Receipt(ReceiptContent { receipts }));
         assert!(receipts.get(room_id!("!some_room:example.org")).is_some());
 
         assert_eq!(serde_json::to_value(&edu).unwrap(), json);
@@ -454,10 +452,7 @@ mod test {
         });
 
         let edu = serde_json::from_value::<Edu>(json.clone()).unwrap();
-        let content = assert_matches!(
-            &edu,
-            Edu::Typing(content) => content
-        );
+        assert_matches!(&edu, Edu::Typing(content));
         assert_eq!(content.room_id, "!somewhere:matrix.org");
         assert_eq!(content.user_id, "@john:matrix.org");
         assert!(content.typing);
@@ -487,10 +482,7 @@ mod test {
         });
 
         let edu = serde_json::from_value::<Edu>(json.clone()).unwrap();
-        let content = assert_matches!(
-            &edu,
-            Edu::DirectToDevice(content) => content
-        );
+        assert_matches!(&edu, Edu::DirectToDevice(content));
         assert_eq!(content.sender, "@john:example.com");
         assert_eq!(content.ev_type, ToDeviceEventType::RoomKeyRequest);
         assert_eq!(content.message_id, "hiezohf6Hoo7kaev");
@@ -540,10 +532,7 @@ mod test {
         });
 
         let edu = serde_json::from_value::<Edu>(json.clone()).unwrap();
-        let content = assert_matches!(
-            &edu,
-            Edu::SigningKeyUpdate(content) => content
-        );
+        assert_matches!(&edu, Edu::SigningKeyUpdate(content));
         assert_eq!(content.user_id, "@alice:example.com");
         assert!(content.master_key.is_some());
         assert!(content.self_signing_key.is_some());

@@ -14,15 +14,13 @@ pub mod leave_room;
 pub mod mutual_rooms;
 pub mod unban_user;
 
-use std::collections::BTreeMap;
-
-use ruma_common::{thirdparty::Medium, OwnedServerName, OwnedServerSigningKeyId, OwnedUserId};
+use ruma_common::{thirdparty::Medium, OwnedUserId, ServerSignatures};
 use serde::{Deserialize, Serialize};
 
 /// A signature of an `m.third_party_invite` token to prove that this user owns a third party
 /// identity which has been invited to the room.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct ThirdPartySigned {
     /// The Matrix ID of the user who issued the invite.
     pub sender: OwnedUserId,
@@ -34,7 +32,7 @@ pub struct ThirdPartySigned {
     pub token: String,
 
     /// A signatures object containing a signature of the entire signed object.
-    pub signatures: BTreeMap<OwnedServerName, BTreeMap<OwnedServerSigningKeyId, String>>,
+    pub signatures: ServerSignatures,
 }
 
 impl ThirdPartySigned {
@@ -44,7 +42,7 @@ impl ThirdPartySigned {
         sender: OwnedUserId,
         mxid: OwnedUserId,
         token: String,
-        signatures: BTreeMap<OwnedServerName, BTreeMap<OwnedServerSigningKeyId, String>>,
+        signatures: ServerSignatures,
     ) -> Self {
         Self { sender, mxid, token, signatures }
     }
@@ -55,7 +53,7 @@ impl ThirdPartySigned {
 /// To create an instance of this type, first create a `Invite3pidInit` and convert it via
 /// `Invite3pid::from` / `.into()`.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct Invite3pid {
     /// Hostname and port of identity server to be used for account lookups.
     pub id_server: String,

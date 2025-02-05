@@ -1,19 +1,26 @@
 [package]
 name = "ruma-identifiers-validation"
 description = "Validation logic for ruma-common and ruma-macros"
-homepage = "https://www.ruma.io/"
+homepage = "https://ruma.dev/"
 repository = "https://github.com/ruma/ruma"
 license = "MIT"
-version = "0.9.1"
+version = "0.10.1"
 edition = "2021"
-rust-version = "1.64"
+rust-version = { workspace = true }
 
 [package.metadata.docs.rs]
 all-features = true
 
 [features]
-compat = []
+# Allow IDs to exceed 255 bytes.
+compat-arbitrary-length-ids = []
+
+# Don't validate the version in `server_signing_key_version::validate`.
+compat-server-signing-key-version = []
 
 [dependencies]
 js_int = { workspace = true }
 thiserror = { workspace = true }
+
+[lints]
+workspace = true

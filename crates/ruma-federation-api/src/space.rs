@@ -2,9 +2,10 @@
 
 use js_int::UInt;
 use ruma_common::{
-    directory::PublicRoomJoinRule, events::space::child::HierarchySpaceChildEvent, room::RoomType,
-    serde::Raw, OwnedMxcUri, OwnedRoomAliasId, OwnedRoomId,
+    room::RoomType, serde::Raw, space::SpaceRoomJoinRule, OwnedMxcUri, OwnedRoomAliasId,
+    OwnedRoomId,
 };
+use ruma_events::space::child::HierarchySpaceChildEvent;
 use serde::{Deserialize, Serialize};
 
 pub mod get_hierarchy;
@@ -14,12 +15,15 @@ pub mod get_hierarchy;
 /// To create an instance of this type, first create a `SpaceHierarchyParentSummaryInit` and convert
 /// it via `SpaceHierarchyParentSummary::from` / `.into()`.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct SpaceHierarchyParentSummary {
     /// The canonical alias of the room, if any.
+    ///
+    /// If you activate the `compat-empty-string-null` feature, this field being an empty
+    /// string in JSON will result in `None` here during deserialization.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(
-        feature = "compat",
+        feature = "compat-empty-string-null",
         serde(default, deserialize_with = "ruma_common::serde::empty_string_as_none")
     )]
     pub canonical_alias: Option<OwnedRoomAliasId>,
@@ -48,18 +52,18 @@ pub struct SpaceHierarchyParentSummary {
 
     /// The URL for the room's avatar, if one is set.
     ///
-    /// If you activate the `compat` feature, this field being an empty string in JSON will result
-    /// in `None` here during deserialization.
+    /// If you activate the `compat-empty-string-null` feature, this field being an empty string in
+    /// JSON will result in `None` here during deserialization.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(
-        feature = "compat",
+        feature = "compat-empty-string-null",
         serde(default, deserialize_with = "ruma_common::serde::empty_string_as_none")
     )]
     pub avatar_url: Option<OwnedMxcUri>,
 
     /// The join rule of the room.
     #[serde(default, skip_serializing_if = "ruma_common::serde::is_default")]
-    pub join_rule: PublicRoomJoinRule,
+    pub join_rule: SpaceRoomJoinRule,
 
     /// The type of room from `m.room.create`, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -98,7 +102,7 @@ pub struct SpaceHierarchyParentSummaryInit {
     pub guest_can_join: bool,
 
     /// The join rule of the room.
-    pub join_rule: PublicRoomJoinRule,
+    pub join_rule: SpaceRoomJoinRule,
 
     /// The stripped `m.space.child` events of the space-room.
     ///
@@ -144,12 +148,15 @@ impl From<SpaceHierarchyParentSummaryInit> for SpaceHierarchyParentSummary {
 /// To create an instance of this type, first create a `SpaceHierarchyChildSummaryInit` and convert
 /// it via `SpaceHierarchyChildSummary::from` / `.into()`.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct SpaceHierarchyChildSummary {
     /// The canonical alias of the room, if any.
+    ///
+    /// If you activate the `compat-empty-string-null` feature, this field being an empty string in
+    /// JSON will result in `None` here during deserialization.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(
-        feature = "compat",
+        feature = "compat-empty-string-null",
         serde(default, deserialize_with = "ruma_common::serde::empty_string_as_none")
     )]
     pub canonical_alias: Option<OwnedRoomAliasId>,
@@ -178,18 +185,18 @@ pub struct SpaceHierarchyChildSummary {
 
     /// The URL for the room's avatar, if one is set.
     ///
-    /// If you activate the `compat` feature, this field being an empty string in JSON will result
-    /// in `None` here during deserialization.
+    /// If you activate the `compat-empty-string-null` feature, this field being an empty string in
+    /// JSON will result in `None` here during deserialization.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(
-        feature = "compat",
+        feature = "compat-empty-string-null",
         serde(default, deserialize_with = "ruma_common::serde::empty_string_as_none")
     )]
     pub avatar_url: Option<OwnedMxcUri>,
 
     /// The join rule of the room.
     #[serde(default, skip_serializing_if = "ruma_common::serde::is_default")]
-    pub join_rule: PublicRoomJoinRule,
+    pub join_rule: SpaceRoomJoinRule,
 
     /// The type of room from `m.room.create`, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -223,7 +230,7 @@ pub struct SpaceHierarchyChildSummaryInit {
     pub guest_can_join: bool,
 
     /// The join rule of the room.
-    pub join_rule: PublicRoomJoinRule,
+    pub join_rule: SpaceRoomJoinRule,
 
     /// If the room is a restricted room, these are the room IDs which are specified by the join
     /// rules.
@@ -252,6 +259,39 @@ impl From<SpaceHierarchyChildSummaryInit> for SpaceHierarchyChildSummary {
             avatar_url: None,
             join_rule,
             room_type: None,
+            allowed_room_ids,
+        }
+    }
+}
+
+impl From<SpaceHierarchyParentSummary> for SpaceHierarchyChildSummary {
+    fn from(parent: SpaceHierarchyParentSummary) -> Self {
+        let SpaceHierarchyParentSummary {
+            canonical_alias,
+            name,
+            num_joined_members,
+            room_id,
+            topic,
+            world_readable,
+            guest_can_join,
+            avatar_url,
+            join_rule,
+            room_type,
+            children_state: _,
+            allowed_room_ids,
+        } = parent;
+
+        Self {
+            canonical_alias,
+            name,
+            num_joined_members,
+            room_id,
+            topic,
+            world_readable,
+            guest_can_join,
+            avatar_url,
+            join_rule,
+            room_type,
             allowed_room_ids,
         }
     }

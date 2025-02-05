@@ -4,22 +4,22 @@
 
 use std::{collections::BTreeMap, time::Duration};
 
-use super::{DeviceLists, UnreadNotificationsCount};
 use js_int::UInt;
 use ruma_common::{
     api::{request, response, Metadata},
-    events::{
-        presence::PresenceEvent, AnyGlobalAccountDataEvent, AnyRoomAccountDataEvent,
-        AnyStrippedStateEvent, AnySyncEphemeralRoomEvent, AnySyncStateEvent, AnySyncTimelineEvent,
-        AnyToDeviceEvent,
-    },
     metadata,
     presence::PresenceState,
     serde::Raw,
-    DeviceKeyAlgorithm, OwnedEventId, OwnedRoomId,
+    OneTimeKeyAlgorithm, OwnedEventId, OwnedRoomId, OwnedUserId,
+};
+use ruma_events::{
+    presence::PresenceEvent, AnyGlobalAccountDataEvent, AnyRoomAccountDataEvent,
+    AnyStrippedStateEvent, AnySyncEphemeralRoomEvent, AnySyncStateEvent, AnySyncTimelineEvent,
+    AnyToDeviceEvent,
 };
 use serde::{Deserialize, Serialize};
 
+use super::{DeviceLists, UnreadNotificationsCount};
 use crate::filter::FilterDefinition;
 
 const METADATA: Metadata = metadata! {
@@ -102,14 +102,13 @@ pub struct Response {
     /// For each key algorithm, the number of unclaimed one-time keys
     /// currently held on the server for a device.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub device_one_time_keys_count: BTreeMap<DeviceKeyAlgorithm, UInt>,
+    pub device_one_time_keys_count: BTreeMap<OneTimeKeyAlgorithm, UInt>,
 
-    /// For each key algorithm, the number of unclaimed one-time keys
-    /// currently held on the server for a device.
+    /// The unused fallback key algorithms.
     ///
     /// The presence of this field indicates that the server supports
     /// fallback keys.
-    pub device_unused_fallback_key_types: Option<Vec<DeviceKeyAlgorithm>>,
+    pub device_unused_fallback_key_types: Option<Vec<OneTimeKeyAlgorithm>>,
 }
 
 impl Request {
@@ -138,7 +137,7 @@ impl Response {
 /// A filter represented either as its full JSON definition or the ID of a saved filter.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[allow(clippy::large_enum_variant)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 #[serde(untagged)]
 pub enum Filter {
     // The filter definition needs to be (de)serialized twice because it is a URL-encoded JSON
@@ -173,7 +172,7 @@ impl From<String> for Filter {
 
 /// Updates to rooms.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct Rooms {
     /// The rooms that the user has left or been banned from.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -206,7 +205,7 @@ impl Rooms {
 
 /// Historical updates to left rooms.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct LeftRoom {
     /// The timeline of messages and state changes in the room up to the point when the user
     /// left.
@@ -236,7 +235,7 @@ impl LeftRoom {
 
 /// Updates to joined rooms.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct JoinedRoom {
     /// Information about the room which clients may need to correctly render it
     /// to users.
@@ -317,25 +316,57 @@ impl JoinedRoom {
     }
 }
 
-/// Updates to knocked rooms.
+/// Updates to a room that the user has knocked upon.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct KnockedRoom {
-    /// The knock state.
+    /// Updates to the stripped state of the room.
+    #[serde(default, skip_serializing_if = "KnockState::is_empty")]
     pub knock_state: KnockState,
 }
 
-/// A mapping from a key `events` to a list of `StrippedStateEvent`.
+impl KnockedRoom {
+    /// Creates an empty `KnockedRoom`.
+    pub fn new() -> Self {
+        Default::default()
+    }
+
+    /// Whether there are updates for this room.
+    pub fn is_empty(&self) -> bool {
+        self.knock_state.is_empty()
+    }
+}
+
+impl From<KnockState> for KnockedRoom {
+    fn from(knock_state: KnockState) -> Self {
+        KnockedRoom { knock_state, ..Default::default() }
+    }
+}
+
+/// Stripped state updates of a room that the user has knocked upon.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct KnockState {
-    /// The list of events.
+    /// The stripped state of a room that the user has knocked upon.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub events: Vec<Raw<AnyStrippedStateEvent>>,
+}
+
+impl KnockState {
+    /// Creates an empty `KnockState`.
+    pub fn new() -> Self {
+        Default::default()
+    }
+
+    /// Whether there are stripped state updates in this room.
+    pub fn is_empty(&self) -> bool {
+        self.events.is_empty()
+    }
 }
 
 /// Events in the room.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct Timeline {
     /// True if the number of events returned was limited by the `limit` on the filter.
     ///
@@ -349,7 +380,6 @@ pub struct Timeline {
     pub prev_batch: Option<String>,
 
     /// A list of events.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub events: Vec<Raw<AnySyncTimelineEvent>>,
 }
 
@@ -360,14 +390,17 @@ impl Timeline {
     }
 
     /// Returns true if there are no timeline updates.
+    ///
+    /// A `Timeline` is considered non-empty if it has at least one event, a
+    /// `prev_batch` value, or `limited` is `true`.
     pub fn is_empty(&self) -> bool {
-        self.events.is_empty()
+        !self.limited && self.prev_batch.is_none() && self.events.is_empty()
     }
 }
 
 /// State events in the room.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct State {
     /// A list of state events.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -399,7 +432,7 @@ impl From<Vec<Raw<AnySyncStateEvent>>> for State {
 
 /// The global private data created by this user.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct GlobalAccountData {
     /// A list of events.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -420,7 +453,7 @@ impl GlobalAccountData {
 
 /// The private data that this user has attached to this room.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct RoomAccountData {
     /// A list of events.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -441,7 +474,7 @@ impl RoomAccountData {
 
 /// Ephemeral events not recorded in the timeline or state of the room.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct Ephemeral {
     /// A list of events.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -462,13 +495,13 @@ impl Ephemeral {
 
 /// Information about room for rendering to clients.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct RoomSummary {
     /// Users which can be used to generate a room name if the room does not have one.
     ///
     /// Required if room name or canonical aliases are not set or empty.
     #[serde(rename = "m.heroes", default, skip_serializing_if = "Vec::is_empty")]
-    pub heroes: Vec<String>,
+    pub heroes: Vec<OwnedUserId>,
 
     /// Number of users whose membership status is `join`.
     /// Required if field has changed since last sync; otherwise, it may be
@@ -499,7 +532,7 @@ impl RoomSummary {
 
 /// Updates to the rooms that the user has been invited to.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct InvitedRoom {
     /// The state of a room that the user has been invited to.
     #[serde(default, skip_serializing_if = "InviteState::is_empty")]
@@ -526,7 +559,7 @@ impl From<InviteState> for InvitedRoom {
 
 /// The state of a room that the user has been invited to.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct InviteState {
     /// A list of state events.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -553,7 +586,7 @@ impl From<Vec<Raw<AnyStrippedStateEvent>>> for InviteState {
 
 /// Updates to the presence status of other users.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct Presence {
     /// A list of events.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -574,7 +607,7 @@ impl Presence {
 
 /// Messages sent directly between devices.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct ToDevice {
     /// A list of to-device events.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -603,16 +636,17 @@ mod tests {
     #[test]
     fn timeline_serde() {
         let timeline = assign!(Timeline::new(), { limited: true });
-        let timeline_serialized = json!({ "limited": true });
+        let timeline_serialized = json!({ "events": [], "limited": true });
         assert_eq!(to_json_value(timeline).unwrap(), timeline_serialized);
 
         let timeline_deserialized = from_json_value::<Timeline>(timeline_serialized).unwrap();
         assert!(timeline_deserialized.limited);
 
         let timeline_default = Timeline::default();
-        assert_eq!(to_json_value(timeline_default).unwrap(), json!({}));
+        assert_eq!(to_json_value(timeline_default).unwrap(), json!({ "events": [] }));
 
-        let timeline_default_deserialized = from_json_value::<Timeline>(json!({})).unwrap();
+        let timeline_default_deserialized =
+            from_json_value::<Timeline>(json!({ "events": [] })).unwrap();
         assert!(!timeline_default_deserialized.limited);
     }
 }
@@ -657,7 +691,7 @@ mod client_tests {
 mod server_tests {
     use std::time::Duration;
 
-    use assert_matches::assert_matches;
+    use assert_matches2::assert_matches;
     use ruma_common::{api::IncomingRequest as _, presence::PresenceState};
 
     use super::{Filter, Request};
@@ -684,7 +718,7 @@ mod server_tests {
         )
         .unwrap();
 
-        let id = assert_matches!(req.filter, Some(Filter::FilterId(id)) => id);
+        assert_matches!(req.filter, Some(Filter::FilterId(id)));
         assert_eq!(id, "myfilter");
         assert_eq!(req.since.as_deref(), Some("myts"));
         assert!(!req.full_state);
@@ -733,7 +767,7 @@ mod server_tests {
         )
         .unwrap();
 
-        let id = assert_matches!(req.filter, Some(Filter::FilterId(id)) => id);
+        assert_matches!(req.filter, Some(Filter::FilterId(id)));
         assert_eq!(id, "EOKFFmdZYF");
         assert_eq!(req.since, None);
         assert!(!req.full_state);

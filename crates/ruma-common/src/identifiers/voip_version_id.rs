@@ -28,13 +28,12 @@ use crate::{IdParseError, PrivOwnedStr};
 /// For simplicity, version 0 has a string representation, but trying to construct a `VoipVersionId`
 /// from a `"0"` string will not result in the `V0` variant.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, DisplayAsRefStr)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub enum VoipVersionId {
     /// A version 0 VoIP call.
     V0,
 
     /// A version 1 VoIP call.
-    #[cfg(feature = "unstable-msc2746")]
     V1,
 
     #[doc(hidden)]
@@ -46,7 +45,6 @@ impl VoipVersionId {
     pub fn as_str(&self) -> &str {
         match &self {
             Self::V0 => "0",
-            #[cfg(feature = "unstable-msc2746")]
             Self::V1 => "1",
             Self::_Custom(PrivOwnedStr(s)) => s,
         }
@@ -80,7 +78,7 @@ impl<'de> Deserialize<'de> for VoipVersionId {
     {
         struct CallVersionVisitor;
 
-        impl<'de> Visitor<'de> for CallVersionVisitor {
+        impl Visitor<'_> for CallVersionVisitor {
             type Value = VoipVersionId;
 
             fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -133,7 +131,6 @@ where
     T: AsRef<str> + Into<Box<str>>,
 {
     match s.as_ref() {
-        #[cfg(feature = "unstable-msc2746")]
         "1" => VoipVersionId::V1,
         _ => VoipVersionId::_Custom(PrivOwnedStr(s.into())),
     }
@@ -153,7 +150,7 @@ impl From<String> for VoipVersionId {
 
 #[cfg(test)]
 mod tests {
-    use assert_matches::assert_matches;
+    use assert_matches2::assert_matches;
     use js_int::uint;
     use serde_json::{from_value as from_json_value, json, to_value as to_json_value};
 
@@ -174,17 +171,13 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "unstable-msc2746")]
     fn valid_version_1() {
-        assert_eq!(VoipVersionId::try_from("1"), Ok(VoipVersionId::V1));
+        assert_eq!(VoipVersionId::from("1"), VoipVersionId::V1);
     }
 
     #[test]
     fn valid_custom_string_version() {
-        let version = assert_matches!(
-            VoipVersionId::try_from("io.ruma.2"),
-            Ok(version) => version
-        );
+        assert_matches!(VoipVersionId::from("io.ruma.2"), version);
         assert_eq!(version.as_ref(), "io.ruma.2");
     }
 
@@ -199,26 +192,24 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "unstable-msc2746")]
     fn serialize_version_1() {
         assert_eq!(to_json_value(&VoipVersionId::V1).unwrap(), json!("1"));
     }
 
     #[test]
-    #[cfg(feature = "unstable-msc2746")]
     fn deserialize_version_1() {
         assert_eq!(from_json_value::<VoipVersionId>(json!("1")).unwrap(), VoipVersionId::V1);
     }
 
     #[test]
     fn serialize_custom_string() {
-        let version = VoipVersionId::try_from("io.ruma.1").unwrap();
+        let version = VoipVersionId::from("io.ruma.1");
         assert_eq!(to_json_value(&version).unwrap(), json!("io.ruma.1"));
     }
 
     #[test]
     fn deserialize_custom_string() {
-        let version = VoipVersionId::try_from("io.ruma.1").unwrap();
+        let version = VoipVersionId::from("io.ruma.1");
         assert_eq!(from_json_value::<VoipVersionId>(json!("io.ruma.1")).unwrap(), version);
     }
 }

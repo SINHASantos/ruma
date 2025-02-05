@@ -1,15 +1,15 @@
 [package]
 categories = ["api-bindings", "web-programming"]
 description = "Types for the endpoints in the Matrix application service API."
-homepage = "https://www.ruma.io/"
+homepage = "https://ruma.dev/"
 keywords = ["matrix", "chat", "messaging", "ruma"]
 license = "MIT"
 name = "ruma-appservice-api"
 readme = "README.md"
 repository = "https://github.com/ruma/ruma"
-version = "0.8.1"
+version = "0.12.1"
 edition = "2021"
-rust-version = "1.64"
+rust-version = { workspace = true }
 
 [package.metadata.docs.rs]
 all-features = true
@@ -18,16 +18,19 @@ all-features = true
 client = []
 server = []
 
-unstable-exhaustive-types = []
-unstable-msc2409 = []
 unstable-msc3202 = []
+unstable-msc4203 = []
 
 [dependencies]
 js_int = { workspace = true, features = ["serde"] }
-ruma-common = { workspace = true, features = ["api", "events"] }
+ruma-common = { workspace = true, features = ["api"] }
+ruma-events = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
-assert_matches = { workspace = true }
+assert_matches2 = { workspace = true }
 serde_yaml = "0.9.14"
+
+[lints]
+workspace = true

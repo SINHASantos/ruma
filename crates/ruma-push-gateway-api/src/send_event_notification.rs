@@ -10,16 +10,14 @@ pub mod v1 {
     use js_int::{uint, UInt};
     use ruma_common::{
         api::{request, response, Metadata},
-        events::TimelineEventType,
         metadata,
         push::{PushFormat, Tweak},
-        serde::StringEnum,
+        serde::{JsonObject, StringEnum},
         OwnedEventId, OwnedRoomAliasId, OwnedRoomId, OwnedUserId, SecondsSinceUnixEpoch,
     };
+    use ruma_events::TimelineEventType;
     use serde::{Deserialize, Serialize};
     use serde_json::value::RawValue as RawJsonValue;
-    #[cfg(feature = "unstable-unspecified")]
-    use serde_json::value::Value as JsonValue;
 
     use crate::PrivOwnedStr;
 
@@ -69,7 +67,7 @@ pub mod v1 {
 
     /// Type for passing information about a push notification
     #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-    #[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+    #[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
     pub struct Notification {
         /// The Matrix event ID of the event being notified about.
         ///
@@ -166,7 +164,7 @@ pub mod v1 {
 
     /// Type for passing information about notification counts.
     #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-    #[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+    #[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
     pub struct NotificationCounts {
         /// The number of unread messages a user has across all of the rooms they
         /// are a member of.
@@ -193,7 +191,7 @@ pub mod v1 {
 
     /// Type for passing information about devices.
     #[derive(Clone, Debug, Deserialize, Serialize)]
-    #[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+    #[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
     pub struct Device {
         /// The `app_id` given when the pusher was created.
         ///
@@ -240,22 +238,15 @@ pub mod v1 {
     /// It can be constructed from [`ruma_common::push::HttpPusherData`] with `::from()` /
     /// `.into()`.
     #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-    #[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+    #[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
     pub struct PusherData {
         /// The format to use when sending notifications to the Push Gateway.
         #[serde(skip_serializing_if = "Option::is_none")]
         pub format: Option<PushFormat>,
 
-        /// iOS (+ macOS?) specific default payload that will be sent to apple push notification
-        /// service.
-        ///
-        /// For more information, see [Sygnal docs][sygnal].
-        ///
-        /// [sygnal]: https://github.com/matrix-org/sygnal/blob/main/docs/applications.md#ios-applications-beware
-        // Not specified, issue: https://github.com/matrix-org/matrix-spec/issues/921
-        #[cfg(feature = "unstable-unspecified")]
-        #[serde(default, skip_serializing_if = "JsonValue::is_null")]
-        pub default_payload: JsonValue,
+        /// Custom data for the pusher.
+        #[serde(flatten, default, skip_serializing_if = "JsonObject::is_empty")]
+        pub data: JsonObject,
     }
 
     impl PusherData {
@@ -264,34 +255,17 @@ pub mod v1 {
             Default::default()
         }
 
-        /// Returns `true` if all fields are `None`.
+        /// Returns `true` if all fields are `None` or empty.
         pub fn is_empty(&self) -> bool {
-            #[cfg(not(feature = "unstable-unspecified"))]
-            {
-                self.format.is_none()
-            }
-
-            #[cfg(feature = "unstable-unspecified")]
-            {
-                self.format.is_none() && self.default_payload.is_null()
-            }
+            self.format.is_none() && self.data.is_empty()
         }
     }
 
     impl From<ruma_common::push::HttpPusherData> for PusherData {
         fn from(data: ruma_common::push::HttpPusherData) -> Self {
-            let ruma_common::push::HttpPusherData {
-                format,
-                #[cfg(feature = "unstable-unspecified")]
-                default_payload,
-                ..
-            } = data;
+            let ruma_common::push::HttpPusherData { format, data, .. } = data;
 
-            Self {
-                format,
-                #[cfg(feature = "unstable-unspecified")]
-                default_payload,
-            }
+            Self { format, data }
         }
     }
 
@@ -305,7 +279,7 @@ pub mod v1 {
             Deserializer, Serializer,
         };
 
-        pub fn serialize<S>(tweak: &[Tweak], serializer: S) -> Result<S::Ok, S::Error>
+        pub(super) fn serialize<S>(tweak: &[Tweak], serializer: S) -> Result<S::Ok, S::Error>
         where
             S: Serializer,
         {
@@ -342,11 +316,7 @@ pub mod v1 {
                         // If a highlight tweak is given with no value, its value is defined to be
                         // true.
                         "highlight" => {
-                            let highlight = if let Ok(highlight) = access.next_value() {
-                                highlight
-                            } else {
-                                true
-                            };
+                            let highlight = access.next_value().unwrap_or(true);
 
                             tweaks.push(Tweak::Highlight(highlight));
                         }
@@ -364,7 +334,7 @@ pub mod v1 {
             }
         }
 
-        pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<Tweak>, D::Error>
+        pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<Vec<Tweak>, D::Error>
         where
             D: Deserializer<'de>,
         {
@@ -376,9 +346,10 @@ pub mod v1 {
     mod tests {
         use js_int::uint;
         use ruma_common::{
-            event_id, events::TimelineEventType, room_alias_id, room_id, user_id,
+            owned_event_id, owned_room_alias_id, owned_room_id, owned_user_id,
             SecondsSinceUnixEpoch,
         };
+        use ruma_events::TimelineEventType;
         use serde_json::{
             from_value as from_json_value, json, to_value as to_json_value, Value as JsonValue,
         };
@@ -413,10 +384,10 @@ pub mod v1 {
                 ]
             });
 
-            let eid = event_id!("$3957tyerfgewrf384").to_owned();
-            let rid = room_id!("!slw48wfj34rtnrf:example.com").to_owned();
-            let uid = user_id!("@exampleuser:matrix.org").to_owned();
-            let alias = room_alias_id!("#exampleroom:matrix.org").to_owned();
+            let eid = owned_event_id!("$3957tyerfgewrf384");
+            let rid = owned_room_id!("!slw48wfj34rtnrf:example.com");
+            let uid = owned_user_id!("@exampleuser:matrix.org");
+            let alias = owned_room_alias_id!("#exampleroom:matrix.org");
 
             let count = NotificationCounts { unread: uint!(2), ..NotificationCounts::default() };
 

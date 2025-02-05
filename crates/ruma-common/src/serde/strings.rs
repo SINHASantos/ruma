@@ -9,6 +9,7 @@ use serde::{
 
 /// Serde deserialization decorator to map empty Strings to None,
 /// and forward non-empty Strings to the Deserialize implementation for T.
+///
 /// Useful for the typical
 /// "A room with an X event with an absent, null, or empty Y field
 /// should be treated the same as a room with no such event."
@@ -49,6 +50,80 @@ where
     }
 }
 
+/// Take either a floating point number or a string and deserialize to an floating-point number.
+///
+/// To be used like this:
+/// `#[serde(deserialize_with = "deserialize_as_number_or_string")]`
+pub fn deserialize_as_number_or_string<'de, D>(de: D) -> Result<f64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct F64OrStringVisitor;
+
+    impl Visitor<'_> for F64OrStringVisitor {
+        type Value = f64;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("a double or a string")
+        }
+
+        fn visit_f32<E>(self, v: f32) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(v.into())
+        }
+
+        fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(v)
+        }
+
+        fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            if v <= (f64::MAX as u64) {
+                Ok(v as f64)
+            } else {
+                Err(E::custom("u64 is too large to fit into a f64"))
+            }
+        }
+
+        fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            if v <= (f64::MAX as i64) && v >= (f64::MIN as i64) {
+                Ok(v as f64)
+            } else {
+                Err(E::custom("i64 is too large to fit into a f64"))
+            }
+        }
+
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
+            v.parse().map_err(E::custom)
+        }
+    }
+
+    de.deserialize_any(F64OrStringVisitor)
+}
+
+#[derive(Deserialize)]
+struct NumberOrStringWrapper(#[serde(deserialize_with = "deserialize_as_number_or_string")] f64);
+
+/// Deserializes an `Option<f64>` from an encoded f64 or string or integer (i64 or u64).
+pub fn deserialize_as_optional_number_or_string<'de, D>(
+    deserializer: D,
+) -> Result<Option<f64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(Option::<NumberOrStringWrapper>::deserialize(deserializer)?.map(|w| w.0))
+}
+
 /// Take either an integer number or a string and deserialize to an integer number.
 ///
 /// To be used like this:
@@ -59,7 +134,7 @@ where
 {
     struct IntOrStringVisitor;
 
-    impl<'de> Visitor<'de> for IntOrStringVisitor {
+    impl Visitor<'_> for IntOrStringVisitor {
         type Value = Int;
 
         fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -160,7 +235,7 @@ where
         type Value = BTreeMap<T, Int>;
 
         fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-            formatter.write_str("a map with integers or stings as values")
+            formatter.write_str("a map with integers or strings as values")
         }
 
         fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {

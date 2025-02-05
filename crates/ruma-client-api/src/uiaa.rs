@@ -9,7 +9,7 @@ use ruma_common::{
     api::{error::IntoHttpError, EndpointError, OutgoingResponse},
     serde::{from_raw_json_value, JsonObject, StringEnum},
     thirdparty::Medium,
-    ClientSecret, OwnedSessionId, OwnedUserId,
+    OwnedClientSecret, OwnedSessionId, OwnedUserId,
 };
 use serde::{
     de::{self, DeserializeOwned},
@@ -53,6 +53,11 @@ pub enum AuthData {
     /// Fallback acknowledgement.
     FallbackAcknowledgement(FallbackAcknowledgement),
 
+    /// Terms of service (`m.login.terms`).
+    ///
+    /// This type is only valid during account registration.
+    Terms(Terms),
+
     #[doc(hidden)]
     _Custom(CustomAuthData),
 }
@@ -90,6 +95,7 @@ impl AuthData {
             "m.login.msisdn" => Self::Msisdn(deserialize_variant(session, data)?),
             "m.login.dummy" => Self::Dummy(deserialize_variant(session, data)?),
             "m.registration_token" => Self::RegistrationToken(deserialize_variant(session, data)?),
+            "m.login.terms" => Self::Terms(deserialize_variant(session, data)?),
             _ => {
                 Self::_Custom(CustomAuthData { auth_type: auth_type.into(), session, extra: data })
             }
@@ -111,6 +117,7 @@ impl AuthData {
             Self::Dummy(_) => Some(AuthType::Dummy),
             Self::RegistrationToken(_) => Some(AuthType::RegistrationToken),
             Self::FallbackAcknowledgement(_) => None,
+            Self::Terms(_) => Some(AuthType::Terms),
             Self::_Custom(c) => Some(AuthType::_Custom(PrivOwnedStr(c.auth_type.as_str().into()))),
         }
     }
@@ -125,6 +132,7 @@ impl AuthData {
             Self::Dummy(x) => x.session.as_deref(),
             Self::RegistrationToken(x) => x.session.as_deref(),
             Self::FallbackAcknowledgement(x) => Some(&x.session),
+            Self::Terms(x) => x.session.as_deref(),
             Self::_Custom(x) => x.session.as_deref(),
         }
     }
@@ -164,8 +172,10 @@ impl AuthData {
             Self::RegistrationToken(x) => {
                 Cow::Owned(serialize(RegistrationToken { token: x.token.clone(), session: None }))
             }
-            // Dummy and fallback acknowledgement have no associated data
-            Self::Dummy(_) | Self::FallbackAcknowledgement(_) => Cow::Owned(JsonObject::default()),
+            // Dummy, fallback acknowledgement, and terms of service have no associated data
+            Self::Dummy(_) | Self::FallbackAcknowledgement(_) | Self::Terms(_) => {
+                Cow::Owned(JsonObject::default())
+            }
             Self::_Custom(c) => Cow::Borrowed(&c.extra),
         }
     }
@@ -182,6 +192,7 @@ impl fmt::Debug for AuthData {
             Self::Dummy(inner) => inner.fmt(f),
             Self::RegistrationToken(inner) => inner.fmt(f),
             Self::FallbackAcknowledgement(inner) => inner.fmt(f),
+            Self::Terms(inner) => inner.fmt(f),
             Self::_Custom(inner) => inner.fmt(f),
         }
     }
@@ -213,6 +224,7 @@ impl<'de> Deserialize<'de> for AuthData {
             Some("m.login.registration_token") => {
                 from_raw_json_value(&json).map(Self::RegistrationToken)
             }
+            Some("m.login.terms") => from_raw_json_value(&json).map(Self::Terms),
             None => from_raw_json_value(&json).map(Self::FallbackAcknowledgement),
             Some(_) => from_raw_json_value(&json).map(Self::_Custom),
         }
@@ -252,6 +264,12 @@ pub enum AuthType {
     #[ruma_enum(rename = "m.login.registration_token")]
     RegistrationToken,
 
+    /// Terms of service (`m.login.terms`).
+    ///
+    /// This type is only valid during account registration.
+    #[ruma_enum(rename = "m.login.terms")]
+    Terms,
+
     #[doc(hidden)]
     _Custom(PrivOwnedStr),
 }
@@ -262,7 +280,7 @@ pub enum AuthType {
 ///
 /// [the spec]: https://spec.matrix.org/latest/client-server-api/#password-based
 #[derive(Clone, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 #[serde(tag = "type", rename = "m.login.password")]
 pub struct Password {
     /// One of the user's identifiers.
@@ -298,7 +316,7 @@ impl fmt::Debug for Password {
 ///
 /// [the spec]: https://spec.matrix.org/latest/client-server-api/#google-recaptcha
 #[derive(Clone, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 #[serde(tag = "type", rename = "m.login.recaptcha")]
 pub struct ReCaptcha {
     /// The captcha response.
@@ -328,7 +346,7 @@ impl fmt::Debug for ReCaptcha {
 ///
 /// [the spec]: https://spec.matrix.org/latest/client-server-api/#email-based-identity--homeserver
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 #[serde(tag = "type", rename = "m.login.email.identity")]
 pub struct EmailIdentity {
     /// Thirdparty identifier credentials.
@@ -345,7 +363,7 @@ pub struct EmailIdentity {
 ///
 /// [the spec]: https://spec.matrix.org/latest/client-server-api/#phone-numbermsisdn-based-identity--homeserver
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 #[serde(tag = "type", rename = "m.login.msisdn")]
 pub struct Msisdn {
     /// Thirdparty identifier credentials.
@@ -362,7 +380,7 @@ pub struct Msisdn {
 ///
 /// [the spec]: https://spec.matrix.org/latest/client-server-api/#dummy-auth
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 #[serde(tag = "type", rename = "m.login.dummy")]
 pub struct Dummy {
     /// The value of the session key given by the homeserver, if any.
@@ -382,7 +400,7 @@ impl Dummy {
 ///
 /// [the spec]: https://spec.matrix.org/latest/client-server-api/#token-authenticated-registration
 #[derive(Clone, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 #[serde(tag = "type", rename = "m.login.registration_token")]
 pub struct RegistrationToken {
     /// The registration token.
@@ -412,7 +430,7 @@ impl fmt::Debug for RegistrationToken {
 ///
 /// [the spec]: https://spec.matrix.org/latest/client-server-api/#fallback
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct FallbackAcknowledgement {
     /// The value of the session key given by the homeserver.
     pub session: String,
@@ -422,6 +440,28 @@ impl FallbackAcknowledgement {
     /// Creates a new `FallbackAcknowledgement` with the given session key.
     pub fn new(session: String) -> Self {
         Self { session }
+    }
+}
+
+/// Data for terms of service flow.
+///
+/// This type is only valid during account registration.
+///
+/// See [the spec] for how to use this.
+///
+/// [the spec]: https://spec.matrix.org/latest/client-server-api/#terms-of-service-at-registration
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
+#[serde(tag = "type", rename = "m.login.terms")]
+pub struct Terms {
+    /// The value of the session key given by the homeserver, if any.
+    pub session: Option<String>,
+}
+
+impl Terms {
+    /// Creates an empty `Terms`.
+    pub fn new() -> Self {
+        Self::default()
     }
 }
 
@@ -540,31 +580,27 @@ pub struct IncomingCustomThirdPartyId {
 
 /// Credentials for third-party authentication (e.g. email / phone number).
 #[derive(Clone, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct ThirdpartyIdCredentials {
-    /// Identity server session ID.
+    /// Identity server (or homeserver) session ID.
     pub sid: OwnedSessionId,
 
-    /// Identity server client secret.
-    pub client_secret: Box<ClientSecret>,
+    /// Identity server (or homeserver) client secret.
+    pub client_secret: OwnedClientSecret,
 
     /// Identity server URL.
-    pub id_server: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id_server: Option<String>,
 
     /// Identity server access token.
-    pub id_access_token: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id_access_token: Option<String>,
 }
 
 impl ThirdpartyIdCredentials {
-    /// Creates a new `ThirdpartyIdCredentials` with the given session ID, client secret, identity
-    /// server address and access token.
-    pub fn new(
-        sid: OwnedSessionId,
-        client_secret: Box<ClientSecret>,
-        id_server: String,
-        id_access_token: String,
-    ) -> Self {
-        Self { sid, client_secret, id_server, id_access_token }
+    /// Creates a new `ThirdpartyIdCredentials` with the given session ID and client secret.
+    pub fn new(sid: OwnedSessionId, client_secret: OwnedClientSecret) -> Self {
+        Self { sid, client_secret, id_server: None, id_access_token: None }
     }
 }
 
@@ -582,7 +618,7 @@ impl fmt::Debug for ThirdpartyIdCredentials {
 /// Information about available authentication flows and status for User-Interactive Authenticiation
 /// API.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct UiaaInfo {
     /// List of authentication flows available for this endpoint.
     pub flows: Vec<AuthFlow>,
@@ -614,7 +650,7 @@ impl UiaaInfo {
 
 /// Description of steps required to authenticate via the User-Interactive Authentication API.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct AuthFlow {
     /// Ordered list of stages required to complete authentication.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -677,7 +713,7 @@ impl OutgoingResponse for UiaaResponse {
         match self {
             UiaaResponse::AuthResponse(authentication_info) => http::Response::builder()
                 .header(http::header::CONTENT_TYPE, "application/json")
-                .status(&http::StatusCode::UNAUTHORIZED)
+                .status(http::StatusCode::UNAUTHORIZED)
                 .body(ruma_common::serde::json_to_buf(&authentication_info)?)
                 .map_err(Into::into),
             UiaaResponse::MatrixError(error) => error.try_into_http_response(),

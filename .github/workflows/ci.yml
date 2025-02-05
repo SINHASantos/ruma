@@ -2,6 +2,9 @@ name: CI
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+  # Keep in sync with version in `rust-toolchain.toml` and `xtask/src/ci.rs`
+  NIGHTLY: nightly-2025-01-23
 
 on:
   push:
@@ -14,10 +17,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
       - name: Check xtask cache
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         id: xtask-cache
         with:
           path: target/debug/xtask
@@ -25,18 +28,11 @@ jobs:
 
       - name: Install rust stable toolchain
         if: steps.xtask-cache.outputs.cache-hit != 'true'
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Build
         if: steps.xtask-cache.outputs.cache-hit != 'true'
-        uses: actions-rs/cargo@v1
-        with:
-          command: build
-          args: -p xtask
+        run: cargo build -p xtask
 
   style:
     name: Style
@@ -44,27 +40,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
       - name: Install rust nightly toolchain
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@master
         with:
-          profile: minimal
-          toolchain: nightly
-          override: true
+          toolchain: ${{ env.NIGHTLY }}
 
-      - uses: Swatinem/rust-cache@v1
+      - uses: Swatinem/rust-cache@v2
 
       - name: Check spelling
-        uses: crate-ci/typos@v1.12.12
+        uses: crate-ci/typos@v1.29.5
 
       - name: Install cargo-sort
-        uses: actions-rs/install@v0.1
+        uses: taiki-e/cache-cargo-install-action@v2
         with:
-          crate: cargo-sort
+          tool: cargo-sort
 
       - name: Get xtask
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: target/debug/xtask
           key: xtask-${{ hashFiles('Cargo.toml', 'xtask/src/**', 'xtask/Cargo.toml') }}
@@ -73,7 +67,7 @@ jobs:
         run: target/debug/xtask ci lint
 
   msrv:
-    name: Rust 1.64 / ${{ matrix.name }}
+    name: Minimum Supported Rust Version / ${{ matrix.name }}
     needs: xtask
     runs-on: ubuntu-latest
     strategy:
@@ -81,9 +75,6 @@ jobs:
         include:
           - name: Check All Features
             cmd: msrv-all
-
-          - name: Check Client
-            cmd: msrv-client
 
           - name: Check Ruma
             cmd: msrv-ruma
@@ -96,31 +87,22 @@ jobs:
 
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
-      - name: Install rust 1.64 toolchain
-        uses: actions-rs/toolchain@v1
+      - name: Install MSRV toolchain
+        uses: dtolnay/rust-toolchain@master
         with:
-          profile: minimal
-          toolchain: "1.64"
+          toolchain: "1.75"
 
-      # Used to compile xtask
-      - name: Install rust stable toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
-
-      - uses: Swatinem/rust-cache@v1
+      - uses: Swatinem/rust-cache@v2
         with:
           # A stable compiler update should automatically not reuse old caches.
           # Add the MSRV as a stable cache key too so bumping it also gets us a
           # fresh cache.
-          sharedKey: msrv1.64
+          shared-key: msrv1.75
 
       - name: Get xtask
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: target/debug/xtask
           key: xtask-${{ hashFiles('Cargo.toml', 'xtask/src/**', 'xtask/Cargo.toml') }}
@@ -147,27 +129,23 @@ jobs:
           - name: Run Tests
             cmd: test-all
 
+          - name: Run Compat Tests
+            cmd: test-compat
+
           - name: Run Doc Tests
             cmd: test-doc
 
-          - name: Test Common Features
-            cmd: test-common
-
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
       - name: Install rust stable toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
+        uses: dtolnay/rust-toolchain@stable
 
-      - uses: Swatinem/rust-cache@v1
+      - uses: Swatinem/rust-cache@v2
 
       - name: Get xtask
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: target/debug/xtask
           key: xtask-${{ hashFiles('Cargo.toml', 'xtask/src/**', 'xtask/Cargo.toml') }}
@@ -200,22 +178,26 @@ jobs:
             cmd: clippy-all
             components: clippy
 
+          - name: Clippy WASM
+            cmd: clippy-wasm
+            targets: wasm32-unknown-unknown
+            components: clippy
+
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
       - name: Install rust nightly toolchain
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@master
         with:
-          profile: minimal
-          toolchain: nightly
-          override: true
+          toolchain: ${{ env.NIGHTLY }}
           components: ${{ matrix.components }}
+          targets: ${{ matrix.targets }}
 
-      - uses: Swatinem/rust-cache@v1
+      - uses: Swatinem/rust-cache@v2
 
       - name: Get xtask
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: target/debug/xtask
           key: xtask-${{ hashFiles('Cargo.toml', 'xtask/src/**', 'xtask/Cargo.toml') }}
@@ -227,28 +209,36 @@ jobs:
     name: Docs
     needs: xtask
     runs-on: ubuntu-latest
+
+    permissions:
+      actions: read
+      contents: read
+      pages: write
+      id-token: write
+
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
       - name: Install nightly rust toolchain
-        uses: actions-rs/toolchain@v1
+        # Nightly needed for use of unstable options
+        uses: dtolnay/rust-toolchain@master
         with:
-          profile: minimal
-          # Nightly needed for use of unstable options
-          toolchain: nightly
-          override: true
+          toolchain: ${{ env.NIGHTLY }}
 
-      - uses: Swatinem/rust-cache@v1
+      - uses: Swatinem/rust-cache@v2
 
       - name: Get xtask
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: target/debug/xtask
           key: xtask-${{ hashFiles('Cargo.toml', 'xtask/src/**', 'xtask/Cargo.toml') }}
 
       - name: Build docs
         run: target/debug/xtask doc --deny-warnings
+
+      - name: Remove .lock file
+        run: rm target/doc/.lock
 
       - name: Compress docs
         if: github.event_name == 'pull_request'
@@ -257,16 +247,17 @@ jobs:
 
       - name: Upload docs as artifact
         if: github.event_name == 'pull_request'
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: docs
           path: docs.tar.zstd
 
-      - name: Deploy to docs repo
+      - name: Upload docs as pages artifact
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: JamesIves/github-pages-deploy-action@4.1.4
+        uses: actions/upload-pages-artifact@v3
         with:
-          folder: target/doc
-          repository-name: ruma/docs.ruma.io
-          branch: main
-          ssh-key: ${{ secrets.DOCS_DEPLOY_KEY }}
+          path: target/doc
+
+      - name: Deploy to GitHub Pages
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/deploy-pages@v4

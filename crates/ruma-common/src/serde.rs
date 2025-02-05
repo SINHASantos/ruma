@@ -26,7 +26,8 @@ pub use self::{
     cow::deserialize_cow_str,
     raw::Raw,
     strings::{
-        btreemap_deserialize_v1_powerlevel_values, deserialize_v1_powerlevel, empty_string_as_none,
+        btreemap_deserialize_v1_powerlevel_values, deserialize_as_number_or_string,
+        deserialize_as_optional_number_or_string, deserialize_v1_powerlevel, empty_string_as_none,
         none_as_empty_string,
     },
 };
@@ -73,6 +74,7 @@ where
 }
 
 pub use ruma_macros::{
-    AsRefStr, DebugAsRefStr, DeserializeFromCowStr, DisplayAsRefStr, FromString, OrdAsRefStr,
-    PartialEqAsRefStr, PartialOrdAsRefStr, SerializeAsRefStr, StringEnum, _FakeDeriveSerde,
+    AsRefStr, AsStrAsRefStr, DebugAsRefStr, DeserializeFromCowStr, DisplayAsRefStr, FromString,
+    OrdAsRefStr, PartialEqAsRefStr, PartialOrdAsRefStr, SerializeAsRefStr, StringEnum,
+    _FakeDeriveSerde,
 };

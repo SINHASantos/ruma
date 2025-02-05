@@ -1,5 +1,92 @@
 # [unreleased]
 
+Breaking changes:
+
+- `user_id::validate` is now compatible with all non-compliant user IDs in the
+  wild by default, due to a clarification in the spec.
+  - The `compat-user-id` cargo feature was removed.
+  - `user_id::localpart_is_backwards_compatible` can be used to validate the
+    localpart of user IDs received over federation.
+  - `user_id::localpart_is_fully_conforming` always strictly validates against
+    the strict and historical grammars, regardless of the compat features that
+    are enabled.
+  - `user_id::validate_strict` allows to validate strictly a user ID against the
+    strict grammar, regardless of the compat features that are enabled.
+
+Improvements:
+
+- The maximum allowed length of Matrix identifiers is exposed as `ID_MAX_BYTES`.
+- `room_id::validate` disallows the `NUL` byte, due to a clarification in the
+  spec.
+- `room_alias_id::validate` disallows the `NUL` byte for the localpart, due to a
+  clarification in the spec.
+
+# 0.10.1
+
+Improvements:
+
+- Upgrade `thiserror` to 2.0.0.
+
+# 0.10.0
+
+Breaking changes:
+
+- `key_id::validate` takes a generic parameter that implements the new `KeyName`
+  trait to validate the key name part. This allows to validate key names that
+  are not only server signing key versions.
+- The `compat-key-id` cargo feature was renamed to
+  `compat-server-signing-key-version`.
+- Remove the `device_key_id` module. `DeviceKeyId` is now validated with
+  `key_id::validate`.
+
+Improvements:
+
+- Add `server_signing_key_version::validate`.
+- Add `base64_public_key::validate`.
+
+# 0.9.5
+
+Bug fixes:
+
+- Allow underscores (`_`) when validating MXC URIs.
+  - They have always been allowed in the spec in order to support URL-safe
+    base64-encoded media IDs.
+
+Improvements:
+
+- Point links to the Matrix 1.10 specification
+
+# 0.9.4
+
+Yanked because it was created from the wrong branch
+
+# 0.9.3
+
+Improvements:
+
+- Don't require room IDs to contain a server name
+  - Room IDs being splittable into localpart and servername does not have
+    much inherent value and there are proposals like [MSC4051] that propose
+    changing the format. Relaxing the rules makes Ruma forwards-compatible
+    with those proposals. The server_name accessor is kept because it is
+    used by at least one downstream, but is updated to return an `Option`.
+
+[MSC4051]: https://github.com/matrix-org/matrix-spec-proposals/pull/4051
+
+# 0.9.2
+
+Bug fixes:
+
+- Don't consider empty localpart of a user ID as valid
+  - It is accepted under the `compat-user-id` feature, but not considered
+    fully-conforming
+
+Improvements:
+
+- Allow `+` in the localpart of user IDs according to MSC4009 / Matrix 1.8
+- Add `compat-arbitrary-length-ids` Cargo feature for opting out of 255-byte
+  length check for all ID types
+
 # 0.9.1
 
 Improvements:

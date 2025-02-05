@@ -1,5 +1,43 @@
 # [unreleased]
 
+# 0.13.0
+
+Bug fixes:
+
+- Fix tiebreaking logic in state resolution.
+
+Improvements:
+
+- The `unstable-exhaustive-types` cargo feature was replaced by the
+  `ruma_unstable_exhaustive_types` compile-time `cfg` setting. Like all `cfg`
+  settings, it can be enabled at compile-time with the `RUSTFLAGS` environment
+  variable, or inside `.cargo/config.toml`. It can also be enabled by setting
+  the `RUMA_UNSTABLE_EXHAUSTIVE_TYPES` environment variable.
+
+# 0.12.0
+
+Upgrade `ruma-events` to 0.29.0.
+
+# 0.11.0
+
+Breaking changes:
+
+- Upgrade dependencies
+
+Bug fixes:
+
+- Disallow `invite` -> `knock` membership transition.
+  The spec was determined to be right about rejecting it in the first place:
+  <https://github.com/matrix-org/matrix-spec/pull/1717>
+- Perform extra redaction checks on room versions 1 and 2, rather than for
+  version 3 and onwards
+
+# 0.10.0
+
+Improvements:
+
+- Add `RoomVersion::V11` according to MSC3820 / Matrix 1.8
+
 # 0.9.1
 
 No changes for this version

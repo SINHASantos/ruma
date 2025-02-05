@@ -3,6 +3,7 @@
 //! This binary is integrated into the `cargo` command line by using an alias in
 //! `.cargo/config`. Run commands as `cargo xtask [command]`.
 
+#![allow(unreachable_pub)]
 #![allow(clippy::exhaustive_structs)]
 // https://github.com/rust-lang/rust-clippy/issues/9029
 #![allow(clippy::derive_partial_eq_without_eq)]
@@ -13,7 +14,9 @@ use clap::{Parser, Subcommand};
 use serde::Deserialize;
 use serde_json::from_str as from_json_str;
 
-#[cfg(feature = "default")]
+// Keep in sync with version in `rust-toolchain.toml` and `.github/workflows/ci.yml`
+const NIGHTLY: &str = "nightly-2025-01-23";
+
 mod cargo;
 mod ci;
 mod doc;
@@ -22,10 +25,12 @@ mod release;
 #[cfg(feature = "default")]
 mod util;
 
+use cargo::Package;
 use ci::{CiArgs, CiTask};
 use doc::DocTask;
 #[cfg(feature = "default")]
 use release::{ReleaseArgs, ReleaseTask};
+use xshell::Shell;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -66,15 +71,19 @@ fn main() -> Result<()> {
 #[derive(Clone, Debug, Deserialize)]
 struct Metadata {
     pub workspace_root: PathBuf,
-    #[cfg(feature = "default")]
-    pub packages: Vec<cargo::Package>,
+    pub packages: Vec<Package>,
 }
 
 impl Metadata {
     /// Load a new `Metadata` from the command line.
-    pub fn load() -> Result<Metadata> {
-        let metadata_json = cmd!("cargo metadata --no-deps --format-version 1").read()?;
+    pub fn load(sh: &Shell) -> Result<Metadata> {
+        let metadata_json = cmd!(sh, "cargo metadata --no-deps --format-version 1").read()?;
         Ok(from_json_str(&metadata_json)?)
+    }
+
+    /// Find the package with the given name.
+    pub fn find_package(&self, name: &str) -> Option<&Package> {
+        self.packages.iter().find(|p| p.name == name)
     }
 }
 
@@ -88,11 +97,11 @@ struct Config {
 #[cfg(feature = "default")]
 impl Config {
     /// Load a new `Config` from `config.toml`.
-    fn load() -> Result<Self> {
+    fn load(sh: &Shell) -> Result<Self> {
         use std::{env, path::Path};
 
         let path = Path::new(&env!("CARGO_MANIFEST_DIR")).join("config.toml");
-        let config = xshell::read_file(path)?;
+        let config = sh.read_file(path)?;
         Ok(toml::from_str(&config)?)
     }
 }
@@ -109,7 +118,7 @@ struct GithubConfig {
 
 #[macro_export]
 macro_rules! cmd {
-    ($cmd:tt) => {
-        xshell::cmd!($cmd).echo_cmd(false)
+    ($sh: expr, $cmd:tt) => {
+        xshell::cmd!($sh, $cmd).quiet()
     };
 }

@@ -1,19 +1,20 @@
 use std::ops::Not;
 
+use cfg_if::cfg_if;
 use proc_macro2::TokenStream;
 use quote::{quote, ToTokens};
 use syn::{
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
     visit::Visit,
-    DeriveInput, Field, Generics, Ident, ItemStruct, Lifetime, Token, Type,
+    Field, Generics, Ident, ItemStruct, Lifetime, Token, Type,
 };
 
 use super::{
     attribute::{DeriveResponseMeta, ResponseMeta},
     ensure_feature_presence,
 };
-use crate::util::import_ruma_common;
+use crate::util::{field_has_serde_flatten_attribute, import_ruma_common, PrivateField};
 
 mod incoming;
 mod outgoing;
@@ -32,14 +33,47 @@ pub fn expand_response(attr: ResponseAttr, item: ItemStruct) -> TokenStream {
             _ => None,
         })
         .unwrap_or_else(|| quote! { #ruma_common::api::error::MatrixError });
+    let status_ident = attr
+        .0
+        .iter()
+        .find_map(|a| match a {
+            DeriveResponseMeta::Status(ident) => Some(quote! { #ident }),
+            _ => None,
+        })
+        .unwrap_or_else(|| quote! { OK });
+
+    cfg_if! {
+        if #[cfg(feature = "__internal_macro_expand")] {
+            use syn::parse_quote;
+
+            let mut derive_input = item.clone();
+            derive_input.attrs.push(parse_quote! {
+                #[ruma_api(error = #error_ty, status = #status_ident)]
+            });
+            crate::util::cfg_expand_struct(&mut derive_input);
+
+            let extra_derive = quote! { #ruma_macros::_FakeDeriveRumaApi };
+            let ruma_api_attribute = quote! {};
+            let response_impls =
+                expand_derive_response(derive_input).unwrap_or_else(syn::Error::into_compile_error);
+        } else {
+            let extra_derive = quote! { #ruma_macros::Response };
+            let ruma_api_attribute = quote! {
+                #[ruma_api(error = #error_ty, status = #status_ident)]
+            };
+            let response_impls = quote! {};
+        }
+    }
 
     quote! {
         #maybe_feature_error
 
-        #[derive(Clone, Debug, #ruma_macros::Response, #ruma_common::serde::_FakeDeriveSerde)]
-        #[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
-        #[ruma_api(error = #error_ty)]
+        #[derive(Clone, Debug, #ruma_common::serde::_FakeDeriveSerde, #extra_derive)]
+        #[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
+        #ruma_api_attribute
         #item
+
+        #response_impls
     }
 }
 
@@ -51,17 +85,14 @@ impl Parse for ResponseAttr {
     }
 }
 
-pub fn expand_derive_response(input: DeriveInput) -> syn::Result<TokenStream> {
-    let fields = match input.data {
-        syn::Data::Struct(s) => s.fields,
-        _ => panic!("This derive macro only works on structs"),
-    };
-
-    let fields = fields.into_iter().map(ResponseField::try_from).collect::<syn::Result<_>>()?;
+pub fn expand_derive_response(input: ItemStruct) -> syn::Result<TokenStream> {
+    let fields =
+        input.fields.into_iter().map(ResponseField::try_from).collect::<syn::Result<_>>()?;
     let mut manual_body_serde = false;
     let mut error_ty = None;
+    let mut status_ident = None;
     for attr in input.attrs {
-        if !attr.path.is_ident("ruma_api") {
+        if !attr.path().is_ident("ruma_api") {
             continue;
         }
 
@@ -71,6 +102,7 @@ pub fn expand_derive_response(input: DeriveInput) -> syn::Result<TokenStream> {
             match meta {
                 DeriveResponseMeta::ManualBodySerde => manual_body_serde = true,
                 DeriveResponseMeta::Error(t) => error_ty = Some(t),
+                DeriveResponseMeta::Status(t) => status_ident = Some(t),
             }
         }
     }
@@ -80,7 +112,8 @@ pub fn expand_derive_response(input: DeriveInput) -> syn::Result<TokenStream> {
         generics: input.generics,
         fields,
         manual_body_serde,
-        error_ty: error_ty.unwrap(),
+        error_ty: error_ty.expect("missing error_ty attribute"),
+        status_ident: status_ident.expect("missing status_ident attribute"),
     };
 
     response.check()?;
@@ -93,6 +126,7 @@ struct Response {
     fields: Vec<ResponseField>,
     manual_body_serde: bool,
     error_ty: Type,
+    status_ident: Ident,
 }
 
 impl Response {
@@ -132,7 +166,8 @@ impl Response {
             });
 
             let serde_attr = self.has_newtype_body().then(|| quote! { #[serde(transparent)] });
-            let fields = self.fields.iter().filter_map(ResponseField::as_body_field);
+            let fields =
+                self.fields.iter().filter_map(ResponseField::as_body_field).map(PrivateField);
 
             quote! {
                 /// Data in the response body.
@@ -144,7 +179,7 @@ impl Response {
             }
         });
 
-        let outgoing_response_impl = self.expand_outgoing(&ruma_common);
+        let outgoing_response_impl = self.expand_outgoing(&self.status_ident, &ruma_common);
         let incoming_response_impl = self.expand_incoming(&self.error_ty, &ruma_common);
 
         quote! {
@@ -178,13 +213,27 @@ impl Response {
             }
         };
 
-        let has_body_fields =
-            self.fields.iter().any(|f| matches!(&f.kind, ResponseFieldKind::Body));
+        let mut body_fields =
+            self.fields.iter().filter(|f| matches!(f.kind, ResponseFieldKind::Body));
+        let first_body_field = body_fields.next();
+        let has_body_fields = first_body_field.is_some();
+
         if has_newtype_body_field && has_body_fields {
             return Err(syn::Error::new_spanned(
                 &self.ident,
                 "Can't have both a newtype body field and regular body fields",
             ));
+        }
+
+        if let Some(first_body_field) = first_body_field {
+            let is_single_body_field = body_fields.next().is_none();
+
+            if is_single_body_field && field_has_serde_flatten_attribute(&first_body_field.inner) {
+                return Err(syn::Error::new_spanned(
+                    first_body_field,
+                    "Use `#[ruma_api(body)]` to represent the JSON body as a single field",
+                ));
+            }
         }
 
         Ok(())
@@ -262,7 +311,7 @@ impl TryFrom<Field> for ResponseField {
         }
 
         let (mut api_attrs, attrs) =
-            field.attrs.into_iter().partition::<Vec<_>, _>(|attr| attr.path.is_ident("ruma_api"));
+            field.attrs.into_iter().partition::<Vec<_>, _>(|attr| attr.path().is_ident("ruma_api"));
         field.attrs = attrs;
 
         let kind_attr = match api_attrs.as_slice() {

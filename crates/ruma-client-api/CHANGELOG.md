@@ -1,5 +1,222 @@
 # [unreleased]
 
+Breaking changes:
+
+- Use `AuthType` for the `auth_type` of `get_uiaa_fallback_page`'s Request.
+- `get_supported_versions::Response::known_versions()` returns a
+  `BTreeSet<MatrixVersion>` instead of a `DoubleEndedIterator`.
+
+# 0.20.1
+
+Bug fixes:
+
+- `unstable-msc4186` without `unstable-msc3575` no longer create a compilation
+  failure.
+
+Improvements:
+
+- Add support for new dehydration format, according to the latest draft of
+  MSC3814.
+- Add unstable support for OIDC-aware compatibility, according to MSC3824.
+- Stabilize support for reporting rooms, according to Matrix 1.13.
+  - Removes the `unstable-msc4151` cargo feature.
+
+# 0.20.0
+
+Breaking changes:
+
+- `ErrorKind` does not implement `AsRef<str>` and `Display` anymore. To get the
+  same result, use `ErrorKind::errcode()`. The `ErrorCode` that is returned
+  implements those traits.
+
+Bug fixes:
+
+- `knock_state` in `KnockedRoom` and `events` in `KnockState` are no longer
+  required during deserialization and are no longer serialized if they are empty.
+  This was a deviation from the spec, those fields were never required.
+
+Improvements:
+
+- Add unstable support for reporting rooms, according to MSC4151.
+- The `unstable-exhaustive-types` cargo feature was replaced by the
+  `ruma_unstable_exhaustive_types` compile-time `cfg` setting. Like all `cfg`
+  settings, it can be enabled at compile-time with the `RUSTFLAGS` environment
+  variable, or inside `.cargo/config.toml`. It can also be enabled by setting
+  the `RUMA_UNSTABLE_EXHAUSTIVE_TYPES` environment variable.
+- Add `ErrorKind::ThreepidMediumNotSupported`, according to MSC4178.
+- Add `ErrorKind::UserSuspended`, according to MSC3823.
+- `EmailPusherData` allows to set custom data for the pusher in the `data` field, due
+  to a clarification in the spec.
+
+# 0.19.0
+
+Breaking changes:
+
+- `RoomSummary::heroes` now properly contains only `UserId` instead of `String`
+  as before.
+- Change type of `client_secret` field in `ThirdpartyIdCredentials`
+  from `Box<ClientSecret>` to `OwnedClientSecret`
+- Make `id_server` and `id_access_token` in `ThirdpartyIdCredentials` optional
+- The `content_disposition` fields of `media::get_content::v3::Response` and
+  `media::get_content_as_filename::v3::Response` use now the strongly typed
+  `ContentDisposition` instead of strings.
+- Replace `server_name` on `knock::knock_room::v3::Request` and 
+  `membership::join_room_by_id_or_alias::v3::Request` with `via` as per MSC4156
+  / Matrix 1.12.
+- Remove `RuleScope`, due to a clarification in the Matrix 1.12 where the `global`
+  scope is now hardcoded.
+  - The `push` endpoints don't take a scope anymore.
+- Make `Content-Type` and `Content-Disposition` mandatory when creating media
+  responses, according to MSC2701 / MSC2702 / Matrix 1.12.
+- Use `OwnedOneTimeKeyId` and `OneTimeKeyAlgorithm` instead of
+  `OwnedDeviceKeyId` and `DeviceKeyAlgorithm` respectively to identify one-time
+  and fallback keys and their algorithm.
+- Use `OwnedCrossSigningOrDeviceSigningKeyId` instead of `OwnedDeviceKeyId` to
+  identify signing keys in `BackupAlgorithm::MegolmBackupV1Curve25519AesSha2`'s
+  `signatures`.
+- Use `CrossSigningOrDeviceSignatures` for the `signatures` of `BackupAlgorithm`.
+- Use `ServerSignatures` for the `signatures` of `ThirdPartySigned`.
+
+Improvements:
+
+- Add support for MSC4186, aka simplified sliding sync, behind
+  `unstable-msc4186`.
+- Add support for MSC4108 OIDC sign in and E2EE set up via QR code
+- Heroes in `sync::sync_events::v4`: `SyncRequestList` and `RoomSubscription`
+  both have a new `include_heroes` field. `SlidingSyncRoom` has a new `heroes`
+  field, with a new type `SlidingSyncRoomHero`.
+- Add support for authenticated media endpoints, according to MSC3916 / Matrix
+  1.11.
+  - They replace the newly deprecated `media::get_*` endpoints.
+- Stabilize support for animated thumbnails, according to Matrix 1.11
+- Add support for terms of service at registration, according to MSC1692 /
+  Matrix 1.11
+- Add unstable support for [MSC4140](https://github.com/matrix-org/matrix-spec-proposals/pull/4140)
+  to send `Future` events and update `Future` events with `future_tokens`.
+  (`Future` events are scheduled messages that can be controlled
+  with `future_tokens` to send on demand or restart the timeout)
+- Change types of `SyncRequestListFilters::{room_types,not_room_types}` to
+  `Vec<RoomTypeFilter>` instead of a vector of strings
+  - This is a breaking change, but only for users of `unstable-msc3575`
+- Add the `get_login_token` field to `Capabilities`, according to a
+  clarification in Matrix 1.12.
+- Add support for account locking, according to MSC3939 / Matrix 1.12.
+- Allow constructing `error::ErrorBody::NotJson` outside of this crate.
+- Add function for checking if a `Content-Type` is considered "safe" for `inline`
+  rendering, according to MSC2702 / Matrix 1.12.
+
+Bug fixes:
+
+- Rename `avatar` to `avatar_url` when (De)serializing `SlidingSyncRoomHero`
+- `user_id` of `SlidingSyncRoomHero` is now mandatory
+- Make authentication with access token optional for the `change_password` and
+  `deactivate` endpoints, due to a clarification in Matrix 1.11.
+- Do not send a request body for the `logout` and `logout_all` endpoints, due
+  to a clarification in Matrix 1.11.
+
+# 0.18.0
+
+Bug fixes:
+
+- Don't require the `failures` field in the
+  `ruma_client_api::keys::upload_signatures::Response` type.
+- `sync::sync_events::v3::Timeline::is_empty` now returns `false` when the
+  `limited` or `prev_batch` fields are set.
+- `login_fallback::Response` now returns the proper content type
+- `sso_login[_with_provider]` responses now use the proper HTTP status code.
+
+Breaking changes:
+
+- The conversion from `PushRule` to `ConditionalPushRule` is infallible since
+  the `conditions` field is optional.
+  - `MissingConditionsError` was removed.
+- The `ts` field in `Request` for `get_media_preview` is now `Option`.
+- The query parameter of `check_registration_token_validity` endpoint
+  has been renamed from `registration_token` to `token`
+- `Error` is now non-exhaustive.
+- `ErrorKind::Forbidden` is now a non-exhaustive struct variant that can be
+  constructed with `ErrorKind::forbidden()`.
+- The `retry_after_ms` field of `ErrorKind::LimitExceeded` was renamed to
+  `retry_after` and is now an `Option<RetryAfter>`, to add support for the
+  Retry-After header, according to MSC4041 / Matrix 1.10
+- Make `get_uiaa_fallback::v3::Response` an enum for a redirect or an HTML page.
+  It will now return the proper status code and headers depending on the variant
+  used.
+- The http crate had a major version bump to version 1.1
+
+Improvements:
+
+- Point links to the Matrix 1.10 specification
+- Add the `get_authentication_issuer` endpoint from MSC2965 behind the
+  `unstable-msc2965` feature.
+- Add `error_kind` accessor method to `ruma_client_api::Error`
+- Add `FromHttpResponseErrorExt` trait that adds an `error_kind` accessor to
+  `FromHttpResponseError<ruma_client_api::Error>`
+- Add deprecated `user` fields for `m.login.password` and `m.login.appservice`
+  login types.
+- Add deprecated `address` and `medium` 3PID fields for `m.login.password`
+  login type.
+- Add optional cookie field to `session::sso_login*::v3` responses.
+- Add support for local user erasure to `account::deactivate::v3::Request`,
+  according to MSC4025 / Matrix 1.10.
+- Allow `discovery::get_supported_versions::v1` to optionally accept
+  authentication, according to MSC4026 / Matrix 1.10.
+- Allow `account::register::v3` and `account::login::v3` to accept
+  authentication for appservices.
+- Add support for recursion on the `get_relating_events` endpoints, according to
+  MSC3981 / Matrix 1.10
+- Add server support discovery endpoint, according to MSC1929 / Matrix 1.10
+- Add `dir` `Request` field on the `get_relating_events_with_rel_types` and
+  `get_relating_events_with_rel_type_and_event_type` endpoints
+- Add unstable support for moderator server support discovery, according to MSC4121
+- Add unstable support for the room summary endpoint from MSC3266 behind the
+  `unstable-msc3266` feature.
+- Add unstable support for animated thumbnails, according to MSC2705
+
+# 0.17.4
+
+Improvements:
+
+- Change the `avatar` field of `SlidingSyncRoom` from `Option` to `JsOption`
+  - This is a breaking change, but only for users enabling the
+    `unstable-msc3575` feature
+
+# 0.17.3
+
+Bug fixes:
+
+- Fix deserialization of `claim_keys` responses without a `failures` field
+
+# 0.17.2
+
+Improvements:
+
+- Add unstable support for MSC3983
+
+# 0.17.1
+
+Improvements:
+
+- Add a ErrorKind variant for the "M_WRONG_ROOM_KEYS_VERSION" Matrix error.
+
+# 0.17.0
+
+Breaking changes:
+
+- Define `rank` as an `Option<f64>` instead of an `Option<UInt>` in
+  `search::search_events::v3::SearchResult`
+- Remove the `token` field from `keys::get_keys::Request`, according to a spec clarification.
+- `SpaceRoomJoinRule` has been moved to the `space` module of the ruma-common crate
+- `backup::SessionData(Init)` were renamed to `EncryptedSessionData(Init)`
+
+Improvements:
+
+- Add convenience constructors for enabling lazy-loading in filters
+- Add support for using an existing session to log in another (MSC3882 / Matrix 1.7)
+- Add support for media download redirects (MSC3860 / Matrix 1.7)
+- Stabilize support for asynchronous media uploads (MSC2246 / Matrix 1.7)
+- Add support for the appservice ping mechanism (MSC 2659 / Matrix 1.7)
+
 # 0.16.2
 
 Bug fixes:
@@ -87,7 +304,7 @@ Improvements:
 * Add `ErrorKind::{UnableToAuthorizeJoin, UnableToGrantJoin}` encountered for restricted rooms
 * Add support for timestamp massaging (MSC3316)
 * Add support for querying relating events (MSC2675)
-* Move `filter::RelationType` to `ruma_common::events::relations`
+* Move `filter::RelationType` to `ruma_events::relations`
 * Add unstable support for discovering an OpenID Connect server (MSC2965)
 * Add `SpaceRoomJoinRule::KnockRestricted` (MSC3787)
 * Add unstable support for private read receipts (MSC2285)
@@ -376,7 +593,7 @@ Improvements:
 
 Bug fixes:
 
-* Fix (de)serialization for `r0::media::get_content_thumnail::Response`
+* Fix (de)serialization for `r0::media::get_content_thumbnail::Response`
 * Make `r0::device::get_devices::Response::devices` public
 
 Breaking changes:

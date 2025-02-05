@@ -1,5 +1,5 @@
-#![doc(html_favicon_url = "https://www.ruma.io/favicon.ico")]
-#![doc(html_logo_url = "https://www.ruma.io/images/logo.png")]
+#![doc(html_favicon_url = "https://ruma.dev/favicon.ico")]
+#![doc(html_logo_url = "https://ruma.dev/images/logo.png")]
 //! (De)serializable types for the [Matrix Application Service API][appservice-api].
 //! These types can be shared by application service and server code.
 //!
@@ -10,6 +10,7 @@
 use serde::{Deserialize, Serialize};
 
 pub mod event;
+pub mod ping;
 pub mod query;
 pub mod thirdparty;
 
@@ -17,7 +18,7 @@ pub mod thirdparty;
 ///
 /// Used for [appservice registration](https://spec.matrix.org/latest/application-service-api/#registration).
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct Namespace {
     /// Whether this application service has exclusive access to events within this namespace.
     pub exclusive: bool,
@@ -37,7 +38,7 @@ impl Namespace {
 ///
 /// Used for [appservice registration](https://spec.matrix.org/latest/application-service-api/#registration).
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct Namespaces {
     /// Events which are sent from certain users.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -67,13 +68,15 @@ impl Namespaces {
 ///
 /// Used for [appservice registration](https://spec.matrix.org/latest/application-service-api/#registration).
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct Registration {
     /// A unique, user - defined ID of the application service which will never change.
     pub id: String,
 
     /// The URL for the application service.
-    pub url: String,
+    ///
+    /// Optionally set to `null` if no traffic is required.
+    pub url: Option<String>,
 
     /// A unique token for application services to use to authenticate requests to Homeservers.
     pub as_token: String,
@@ -96,6 +99,12 @@ pub struct Registration {
     /// The external protocols which the application service provides (e.g. IRC).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub protocols: Option<Vec<String>>,
+
+    /// Whether the application service wants to receive ephemeral data.
+    ///
+    /// Defaults to `false`.
+    #[serde(default, skip_serializing_if = "ruma_common::serde::is_default")]
+    pub receive_ephemeral: bool,
 }
 
 /// Initial set of fields of `Registration`.
@@ -111,7 +120,9 @@ pub struct RegistrationInit {
     pub id: String,
 
     /// The URL for the application service.
-    pub url: String,
+    ///
+    /// Optionally set to `null` if no traffic is required.
+    pub url: Option<String>,
 
     /// A unique token for application services to use to authenticate requests to Homeservers.
     pub as_token: String,
@@ -146,6 +157,16 @@ impl From<RegistrationInit> for Registration {
             rate_limited,
             protocols,
         } = init;
-        Self { id, url, as_token, hs_token, sender_localpart, namespaces, rate_limited, protocols }
+        Self {
+            id,
+            url,
+            as_token,
+            hs_token,
+            sender_localpart,
+            namespaces,
+            rate_limited,
+            protocols,
+            receive_ephemeral: false,
+        }
     }
 }

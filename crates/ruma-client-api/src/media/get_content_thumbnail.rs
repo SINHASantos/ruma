@@ -7,16 +7,18 @@ pub mod v3 {
     //!
     //! [spec]: https://spec.matrix.org/latest/client-server-api/#get_matrixmediav3thumbnailservernamemediaid
 
-    use http::header::CONTENT_TYPE;
+    use std::time::Duration;
+
+    use http::header::{CONTENT_DISPOSITION, CONTENT_TYPE};
     use js_int::UInt;
+    pub use ruma_common::media::Method;
     use ruma_common::{
         api::{request, response, Metadata},
-        metadata,
-        serde::StringEnum,
-        IdParseError, MxcUri, OwnedServerName,
+        http_headers::ContentDisposition,
+        metadata, IdParseError, MxcUri, OwnedServerName,
     };
 
-    use crate::{http_headers::CROSS_ORIGIN_RESOURCE_POLICY, PrivOwnedStr};
+    use crate::http_headers::CROSS_ORIGIN_RESOURCE_POLICY;
 
     const METADATA: Metadata = metadata! {
         method: GET,
@@ -25,11 +27,16 @@ pub mod v3 {
         history: {
             1.0 => "/_matrix/media/r0/thumbnail/:server_name/:media_id",
             1.1 => "/_matrix/media/v3/thumbnail/:server_name/:media_id",
+            1.11 => deprecated,
         }
     };
 
     /// Request type for the `get_content_thumbnail` endpoint.
     #[request(error = crate::Error)]
+    #[deprecated = "\
+        Since Matrix 1.11, clients should use `authenticated_media::get_content_thumbnail::v1::Request` \
+        instead if the homeserver supports it.\
+    "]
     pub struct Request {
         /// The server name from the mxc:// URI (the authoritory component).
         #[ruma_api(path)]
@@ -66,18 +73,34 @@ pub mod v3 {
         )]
         pub allow_remote: bool,
 
-        /// How long to wait for the media to be uploaded
+        /// The maximum duration that the client is willing to wait to start receiving data, in the
+        /// case that the content has not yet been uploaded.
         ///
-        /// This uses the unstable prefix in
-        /// [MSC2246](https://github.com/matrix-org/matrix-spec-proposals/pull/2246)
+        /// The default value is 20 seconds.
         #[ruma_api(query)]
-        #[cfg(feature = "unstable-msc2246")]
         #[serde(
-            default,
-            skip_serializing_if = "ruma_common::serde::is_default",
-            rename = "fi.mau.msc2246.max_stall_ms"
+            with = "ruma_common::serde::duration::ms",
+            default = "ruma_common::media::default_download_timeout",
+            skip_serializing_if = "ruma_common::media::is_default_download_timeout"
         )]
-        pub max_stall_ms: Option<UInt>,
+        pub timeout_ms: Duration,
+
+        /// Whether the server may return a 307 or 308 redirect response that points at the
+        /// relevant media content.
+        ///
+        /// Unless explicitly set to `true`, the server must return the media content itself.
+        #[ruma_api(query)]
+        #[serde(default, skip_serializing_if = "ruma_common::serde::is_default")]
+        pub allow_redirect: bool,
+
+        /// Whether the server should return an animated thumbnail.
+        ///
+        /// When `Some(true)`, the server should return an animated thumbnail if possible and
+        /// supported. When `Some(false)`, the server must not return an animated
+        /// thumbnail. When `None`, the server should not return an animated thumbnail.
+        #[ruma_api(query)]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub animated: Option<bool>,
     }
 
     /// Response type for the `get_content_thumbnail` endpoint.
@@ -91,6 +114,15 @@ pub mod v3 {
         #[ruma_api(header = CONTENT_TYPE)]
         pub content_type: Option<String>,
 
+        /// The value of the `Content-Disposition` HTTP header, possibly containing the name of the
+        /// file that was previously uploaded.
+        ///
+        /// See [MDN] for the syntax.
+        ///
+        /// [MDN]: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Disposition#Syntax
+        #[ruma_api(header = CONTENT_DISPOSITION)]
+        pub content_disposition: Option<ContentDisposition>,
+
         /// The value of the `Cross-Origin-Resource-Policy` HTTP header.
         ///
         /// See [MDN] for the syntax.
@@ -100,6 +132,7 @@ pub mod v3 {
         pub cross_origin_resource_policy: Option<String>,
     }
 
+    #[allow(deprecated)]
     impl Request {
         /// Creates a new `Request` with the given media ID, server name, desired thumbnail width
         /// and desired thumbnail height.
@@ -116,8 +149,9 @@ pub mod v3 {
                 width,
                 height,
                 allow_remote: true,
-                #[cfg(feature = "unstable-msc2246")]
-                max_stall_ms: None,
+                timeout_ms: ruma_common::media::default_download_timeout(),
+                allow_redirect: false,
+                animated: None,
             }
         }
 
@@ -134,28 +168,17 @@ pub mod v3 {
         /// Creates a new `Response` with the given thumbnail.
         ///
         /// The Cross-Origin Resource Policy defaults to `cross-origin`.
-        pub fn new(file: Vec<u8>) -> Self {
+        pub fn new(
+            file: Vec<u8>,
+            content_type: String,
+            content_disposition: ContentDisposition,
+        ) -> Self {
             Self {
                 file,
-                content_type: None,
+                content_type: Some(content_type),
+                content_disposition: Some(content_disposition),
                 cross_origin_resource_policy: Some("cross-origin".to_owned()),
             }
         }
-    }
-
-    /// The desired resizing method.
-    #[doc = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/doc/string_enum.md"))]
-    #[derive(Clone, StringEnum)]
-    #[ruma_enum(rename_all = "snake_case")]
-    #[non_exhaustive]
-    pub enum Method {
-        /// Crop the original to produce the requested image dimensions.
-        Crop,
-
-        /// Maintain the original aspect ratio of the source image.
-        Scale,
-
-        #[doc(hidden)]
-        _Custom(PrivOwnedStr),
     }
 }

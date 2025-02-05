@@ -1,5 +1,86 @@
 # [unreleased]
 
+# 0.12.1
+
+Please refer to the changelogs of:
+
+- ruma-common 0.15.1
+- ruma-events 0.30.1
+- ruma-client-api 0.20.1
+- ruma-appservice-api 0.12.1
+
+# 0.12.0
+
+- The `unstable-exhaustive-types` cargo feature was replaced by the
+  `ruma_unstable_exhaustive_types` compile-time `cfg` setting. Like all `cfg`
+  settings, it can be enabled at compile-time with the `RUSTFLAGS` environment
+  variable, or inside `.cargo/config.toml`. It can also be enabled by setting
+  the `RUMA_UNSTABLE_EXHAUSTIVE_TYPES` environment variable.
+
+Please refer to the changelogs of:
+
+- ruma-common 0.15.0
+- ruma-events 0.30.0
+- ruma-client-api 0.20.0
+- ruma-push-gateway-api 0.11.0
+- ruma-state-res 0.13.0
+
+# 0.11.1
+
+Please refer to the changelogs of:
+
+* ruma-common 0.14.1
+* ruma-events 0.29.1
+
+# 0.11.0
+
+- The `compat-key-id` cargo feature was renamed to
+  `compat-server-signing-key-version`.
+
+Please refer to the changelogs of:
+
+* ruma-common 0.14.0
+* ruma-html 0.3.0
+* ruma-events 0.29.0
+* ruma-client-api 0.19.0
+* ruma-federation-api 0.10.0
+* ruma-appservice-api 0.11.0
+* ruma-identity-service-api 0.10.0
+* ruma-server-util 0.4.0
+
+# 0.10.1
+
+Upgrade `ruma-events` to 0.28.1.
+
+# 0.10.0
+
+- Bump MSRV to 1.75
+- The http crate had a major version bump to version 1.1
+- The `client-isahc` feature was removed
+- Most ruma crates had breaking changes, refer to their changelogs for more
+  details
+
+# 0.9.4
+
+Upgrade `ruma-events` and re-export its new `unstable-msc4075` feature.
+
+# 0.9.3
+
+Upgrade `ruma-client-api` and re-export its new `unstable-msc3983` feature.
+
+# 0.9.2
+
+Upgrade `ruma-events` and re-export its new `unstable-msc3401` feature.
+
+# 0.9.1
+
+This release only exists to regenerate documentation to pull in the latest
+version of `ruma-events` for the `events` module.
+
+# 0.9.0
+
+- Bump MSRV to 1.70
+
 # 0.8.2
 
 Please refer to the changelogs of:

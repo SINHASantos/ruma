@@ -14,10 +14,86 @@
 
 use std::{convert::TryInto as _, error::Error as StdError};
 
+use as_variant::as_variant;
 use bytes::BufMut;
 use serde::{Deserialize, Serialize};
 
+use self::error::{FromHttpRequestError, FromHttpResponseError, IntoHttpError};
 use crate::UserId;
+
+/// Convenient constructor for [`Metadata`] constants.
+///
+/// Usage:
+///
+/// ```
+/// # use ruma_common::{metadata, api::Metadata};
+/// const _: Metadata = metadata! {
+///     method: GET, // one of the associated constants of http::Method
+///     rate_limited: true,
+///     authentication: AccessToken, // one of the variants of api::AuthScheme
+///
+///     // history of endpoint paths
+///     // there must be at least one path but otherwise everything is optional
+///     history: {
+///         unstable => "/_matrix/foo/org.bar.msc9000/baz",
+///         unstable => "/_matrix/foo/org.bar.msc9000/qux",
+///         1.0 => "/_matrix/media/r0/qux",
+///         1.1 => "/_matrix/media/v3/qux",
+///         1.2 => deprecated,
+///         1.3 => removed,
+///     }
+/// };
+/// ```
+#[macro_export]
+macro_rules! metadata {
+    ( $( $field:ident: $rhs:tt ),+ $(,)? ) => {
+        $crate::api::Metadata {
+            $( $field: $crate::metadata!(@field $field: $rhs) ),+
+        }
+    };
+
+    ( @field method: $method:ident ) => { $crate::exports::http::Method::$method };
+
+    ( @field authentication: $scheme:ident ) => { $crate::api::AuthScheme::$scheme };
+
+    ( @field history: {
+        $( unstable => $unstable_path:literal, )*
+        $( $( $version:literal => $rhs:tt, )+ )?
+    } ) => {
+        $crate::metadata! {
+            @history_impl
+            [ $($unstable_path),* ]
+            // Flip left and right to avoid macro parsing ambiguities
+            $( $( $rhs = $version ),+ )?
+        }
+    };
+
+    // Simple literal case: used for description, name, rate_limited
+    ( @field $_field:ident: $rhs:expr ) => { $rhs };
+
+    ( @history_impl
+        [ $($unstable_path:literal),* ]
+        $(
+            $( $stable_path:literal = $version:literal ),+
+            $(,
+                deprecated = $deprecated_version:literal
+                $(, removed = $removed_version:literal )?
+            )?
+        )?
+    ) => {
+        $crate::api::VersionHistory::new(
+            &[ $( $unstable_path ),* ],
+            &[ $($(
+                ($crate::api::MatrixVersion::from_lit(stringify!($version)), $stable_path)
+            ),+)? ],
+            $crate::metadata!(@optional_version $($( $deprecated_version )?)?),
+            $crate::metadata!(@optional_version $($($( $removed_version )?)?)?),
+        )
+    };
+
+    ( @optional_version ) => { None };
+    ( @optional_version $version:literal ) => { Some($crate::api::MatrixVersion::from_lit(stringify!($version))) }
+}
 
 /// Generates [`OutgoingRequest`] and [`IncomingRequest`] implementations.
 ///
@@ -32,23 +108,33 @@ use crate::UserId;
 /// alongside a `Response` type that implements [`OutgoingResponse`] (for
 /// `cfg(feature = "server")`) and / or [`IncomingResponse`] (for `cfg(feature = "client")`).
 ///
+/// By default, the type this macro is used on gets a `#[non_exhaustive]` attribute. This
+/// behavior can be controlled by setting the `ruma_unstable_exhaustive_types` compile-time
+/// `cfg` setting as `--cfg=ruma_unstable_exhaustive_types` using `RUSTFLAGS` or
+/// `.cargo/config.toml` (under `[build]` -> `rustflags = ["..."]`). When that setting is
+/// activated, the attribute is not applied so the type is exhaustive.
+///
 /// ## Attributes
 ///
 /// To declare which part of the request a field belongs to:
 ///
 /// * `#[ruma_api(header = HEADER_NAME)]`: Fields with this attribute will be treated as HTTP
-///   headers on the request. The value must implement `Display`. Generally this is a `String`.
-///   The attribute value shown above as `HEADER_NAME` must be a `const` expression of the type
-///   `http::header::HeaderName`, like one of the constants from `http::header`, e.g.
-///   `CONTENT_TYPE`.
+///   headers on the request. The value must implement `ToString` and `FromStr`. Generally this
+///   is a `String`. The attribute value shown above as `HEADER_NAME` must be a `const`
+///   expression of the type `http::header::HeaderName`, like one of the constants from
+///   `http::header`, e.g. `CONTENT_TYPE`. During deserialization of the request, if the field
+///   is an `Option` and parsing the header fails, the error will be ignored and the value will
+///   be `None`.
 /// * `#[ruma_api(path)]`: Fields with this attribute will be inserted into the matching path
 ///   component of the request URL. If there are multiple of these fields, the order in which
 ///   they are declared must match the order in which they occur in the request path.
 /// * `#[ruma_api(query)]`: Fields with this attribute will be inserting into the URL's query
 ///   string.
-/// * `#[ruma_api(query_map)]`: Instead of individual query fields, one query_map field, of any
-///   type that implements `IntoIterator<Item = (String, String)>` (e.g. `HashMap<String,
-///   String>`, can be used for cases where an endpoint supports arbitrary query parameters.
+/// * `#[ruma_api(query_all)]`: Instead of individual query fields, one query_all field, of any
+///   type that can be (de)serialized by [serde_html_form], can be used for cases where
+///   multiple endpoints should share a query fields type, the query fields are better
+///   expressed as an `enum` rather than a `struct`, or the endpoint supports arbitrary query
+///   parameters.
 /// * No attribute: Fields without an attribute are part of the body. They can use `#[serde]`
 ///   attributes to customize (de)serialization.
 /// * `#[ruma_api(body)]`: Use this if multiple endpoints should share a request body type, or
@@ -133,23 +219,36 @@ use crate::UserId;
 ///     # pub struct Response {}
 /// }
 /// ```
+///
+/// [serde_html_form]: https://crates.io/crates/serde_html_form
 pub use ruma_macros::request;
-
 /// Generates [`OutgoingResponse`] and [`IncomingResponse`] implementations.
 ///
-/// The `OutgoingRequest` impl is feature-gated behind `cfg(feature = "client")`.
-/// The `IncomingRequest` impl is feature-gated behind `cfg(feature = "server")`.
+/// The `OutgoingResponse` impl is feature-gated behind `cfg(feature = "server")`.
+/// The `IncomingResponse` impl is feature-gated behind `cfg(feature = "client")`.
 ///
 /// The generated code expects a `METADATA` constant of type [`Metadata`] to be in scope.
 ///
+/// By default, the type this macro is used on gets a `#[non_exhaustive]` attribute. This
+/// behavior can be controlled by setting the `ruma_unstable_exhaustive_types` compile-time
+/// `cfg` setting as `--cfg=ruma_unstable_exhaustive_types` using `RUSTFLAGS` or
+/// `.cargo/config.toml` (under `[build]` -> `rustflags = ["..."]`). When that setting is
+/// activated, the attribute is not applied so the type is exhaustive.
+///
+/// The status code of `OutgoingResponse` can be optionally overridden by adding the `status`
+/// attribute to `response`. The attribute value must be a status code constant from
+/// `http::StatusCode`, e.g. `IM_A_TEAPOT`.
+///
 /// ## Attributes
 ///
-/// To declare which part of the request a field belongs to:
+/// To declare which part of the response a field belongs to:
 ///
 /// * `#[ruma_api(header = HEADER_NAME)]`: Fields with this attribute will be treated as HTTP
-///   headers on the response. The value must implement `Display`. Generally this is a
-///   `String`. The attribute value shown above as `HEADER_NAME` must be a header name constant
-///   from `http::header`, e.g. `CONTENT_TYPE`.
+///   headers on the response. The value must implement `ToString` and `FromStr`. Generally
+///   this is a `String`. The attribute value shown above as `HEADER_NAME` must be a header
+///   name constant from `http::header`, e.g. `CONTENT_TYPE`. During deserialization of the
+///   response, if the field is an `Option` and parsing the header fails, the error will be
+///   ignored and the value will be `None`.
 /// * No attribute: Fields without an attribute are part of the body. They can use `#[serde]`
 ///   attributes to customize (de)serialization.
 /// * `#[ruma_api(body)]`: Use this if multiple endpoints should share a response body type, or
@@ -185,7 +284,7 @@ pub use ruma_macros::request;
 ///     # #[request]
 ///     # pub struct Request { }
 ///
-///     #[response]
+///     #[response(status = IM_A_TEAPOT)]
 ///     pub struct Response {
 ///         #[serde(skip_serializing_if = "Option::is_none")]
 ///         pub foo: Option<String>,
@@ -230,9 +329,7 @@ pub use ruma_macros::response;
 pub mod error;
 mod metadata;
 
-pub use metadata::{MatrixVersion, Metadata, VersionHistory, VersioningDecision};
-
-use error::{FromHttpRequestError, FromHttpResponseError, IntoHttpError};
+pub use self::metadata::{MatrixVersion, Metadata, VersionHistory, VersioningDecision};
 
 /// An enum to control whether an access token should be added to outgoing requests
 #[derive(Clone, Copy, Debug)]
@@ -245,6 +342,10 @@ pub enum SendAccessToken<'a> {
     /// Always add the access token.
     Always(&'a str),
 
+    /// Add the given appservice token to the request only if the `METADATA` on the request
+    /// requires it.
+    Appservice(&'a str),
+
     /// Don't add an access token.
     ///
     /// This will lead to an error if the request endpoint requires authentication
@@ -256,20 +357,22 @@ impl<'a> SendAccessToken<'a> {
     ///
     /// Returns `Some(_)` if `self` contains an access token.
     pub fn get_required_for_endpoint(self) -> Option<&'a str> {
-        match self {
-            Self::IfRequired(tok) | Self::Always(tok) => Some(tok),
-            Self::None => None,
-        }
+        as_variant!(self, Self::IfRequired | Self::Appservice | Self::Always)
     }
 
     /// Get the access token for an endpoint that should not require one.
     ///
     /// Returns `Some(_)` only if `self` is `SendAccessToken::Always(_)`.
     pub fn get_not_required_for_endpoint(self) -> Option<&'a str> {
-        match self {
-            Self::Always(tok) => Some(tok),
-            Self::IfRequired(_) | Self::None => None,
-        }
+        as_variant!(self, Self::Always)
+    }
+
+    /// Gets the access token for an endpoint that requires one for appservices.
+    ///
+    /// Returns `Some(_)` if `self` is either `SendAccessToken::Appservice(_)`
+    /// or `SendAccessToken::Always(_)`
+    pub fn get_required_for_appservice(self) -> Option<&'a str> {
+        as_variant!(self, Self::Appservice | Self::Always)
     }
 }
 
@@ -414,8 +517,20 @@ pub enum AuthScheme {
     /// Authentication is performed by including an access token in the `Authentication` http
     /// header, or an `access_token` query parameter.
     ///
-    /// It is recommended to use the header over the query parameter.
+    /// Using the query parameter is deprecated since Matrix 1.11.
     AccessToken,
+
+    /// Authentication is optional, and it is performed by including an access token in the
+    /// `Authentication` http header, or an `access_token` query parameter.
+    ///
+    /// Using the query parameter is deprecated since Matrix 1.11.
+    AccessTokenOptional,
+
+    /// Authentication is only performed for appservices, by including an access token in the
+    /// `Authentication` http header, or an `access_token` query parameter.
+    ///
+    /// Using the query parameter is deprecated since Matrix 1.11.
+    AppserviceToken,
 
     /// Authentication is performed by including X-Matrix signatures in the request headers,
     /// as defined in the federation API.
@@ -434,78 +549,4 @@ pub enum Direction {
     /// Return events forwards in time from the requested `from` token.
     #[serde(rename = "f")]
     Forward,
-}
-
-/// Convenient constructor for [`Metadata`] constants.
-///
-/// Usage:
-///
-/// ```
-/// # use ruma_common::{metadata, api::Metadata};
-/// const _: Metadata = metadata! {
-///     method: GET, // one of the associated constants of http::Method
-///     rate_limited: true,
-///     authentication: AccessToken, // one of the variants of api::AuthScheme
-///
-///     // history of endpoint paths
-///     // there must be at least one path but otherwise everything is optional
-///     history: {
-///         unstable => "/_matrix/foo/org.bar.msc9000/baz",
-///         unstable => "/_matrix/foo/org.bar.msc9000/qux",
-///         1.0 => "/_matrix/media/r0/qux",
-///         1.1 => "/_matrix/media/v3/qux",
-///         1.2 => deprecated,
-///         1.3 => removed,
-///     }
-/// };
-/// ```
-#[macro_export]
-macro_rules! metadata {
-    ( $( $field:ident: $rhs:tt ),+ $(,)? ) => {
-        $crate::api::Metadata {
-            $( $field: $crate::metadata!(@field $field: $rhs) ),+
-        }
-    };
-
-    ( @field method: $method:ident ) => { $crate::exports::http::Method::$method };
-
-    ( @field authentication: $scheme:ident ) => { $crate::api::AuthScheme::$scheme };
-
-    ( @field history: {
-        $( unstable => $unstable_path:literal, )*
-        $( $( $version:literal => $rhs:tt, )+ )?
-    } ) => {
-        $crate::metadata! {
-            @history_impl
-            [ $($unstable_path),* ]
-            // Flip left and right to avoid macro parsing ambiguities
-            $( $( $rhs = $version ),+ )?
-        }
-    };
-
-    // Simple literal case: used for description, name, rate_limited
-    ( @field $_field:ident: $rhs:expr ) => { $rhs };
-
-    ( @history_impl
-        [ $($unstable_path:literal),* ]
-        $(
-            $( $stable_path:literal = $version:literal ),+
-            $(,
-                deprecated = $deprecated_version:literal
-                $(, removed = $removed_version:literal )?
-            )?
-        )?
-    ) => {
-        $crate::api::VersionHistory::new(
-            &[ $( $unstable_path ),* ],
-            &[ $($(
-                ($crate::api::MatrixVersion::from_lit(stringify!($version)), $stable_path)
-            ),+)? ],
-            $crate::metadata!(@optional_version $($( $deprecated_version )?)?),
-            $crate::metadata!(@optional_version $($($( $removed_version )?)?)?),
-        )
-    };
-
-    ( @optional_version ) => { None };
-    ( @optional_version $version:literal ) => { Some($crate::api::MatrixVersion::from_lit(stringify!($version))) }
 }

@@ -1,5 +1,69 @@
 # [unreleased]
 
+Breaking changes:
+
+- Remove the `origin` field in `create_join_event::{v1/v2}::RoomState` due to a
+  clarification in the spec.
+
+# 0.11.0
+
+Improvements:
+
+- The `unstable-exhaustive-types` cargo feature was replaced by the
+  `ruma_unstable_exhaustive_types` compile-time `cfg` setting. Like all `cfg`
+  settings, it can be enabled at compile-time with the `RUSTFLAGS` environment
+  variable, or inside `.cargo/config.toml`. It can also be enabled by setting
+  the `RUMA_UNSTABLE_EXHAUSTIVE_TYPES` environment variable.
+
+# 0.10.0
+
+Breaking changes:
+
+- Remove the unused `KeyObject` struct. It is actually supposed to be the same type
+  as `ruma_common::encryption::SignedKey`.
+- Use `OwnedOneTimeKeyId` and `OneTimeKeyAlgorithm` instead of
+  `OwnedDeviceKeyId` and `DeviceKeyAlgorithm` respectively to identify one-time
+  and fallback keys and their algorithm.
+- Use `ServerSignatures` for the `signatures` or `ServerSigningKeys`.
+
+Bug fixes:
+
+- `ServerSigningKeys` can be deserialized when `old_verify_keys` is missing, due to a
+  clarification in the spec.
+
+Improvements:
+
+- Add support for authenticated media endpoints, according to MSC3916 / Matrix 1.11
+- Make `Content-Type` and `Content-Disposition` mandatory when creating media
+  responses, according to MSC2701 / MSC2702 / Matrix 1.12.
+
+# 0.9.0
+
+Breaking changes:
+
+- Use `RawValue` to represent body of `/v1/send_join` request, rather than incorrectly using
+  query parameters
+- The http crate had a major version bump to version 1.1
+
+Improvements:
+
+- Implement `From<SpaceHierarchyParentSummary>` for `SpaceHierarchyChildSummary`
+- Add unstable support for optional `via` field on the `create_invite` endpoint request from
+  MSC4125 behind the `unstable-msc4125` feature.
+- Add unstable support for the `report_content` endpoint from MSC3843 behind the
+  `unstable-msc3843` feature.
+
+# 0.8.0
+
+Bug fixes:
+
+* Use `SpaceRoomJoinRule` for `SpaceHierarchy(Parent/Child)Summary(Init)`. Even if
+  (de)serialization worked before, it is more correct to expect any join rule, like in the CS API
+
+Improvements:
+
+* Deprecate the `v1/send_join` and `v1/send_leave` endpoints according to a spec clarification
+
 # 0.7.1
 
 Improvements:

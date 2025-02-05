@@ -1,5 +1,5 @@
-#![doc(html_favicon_url = "https://www.ruma.io/favicon.ico")]
-#![doc(html_logo_url = "https://www.ruma.io/images/logo.png")]
+#![doc(html_favicon_url = "https://ruma.dev/favicon.ico")]
+#![doc(html_logo_url = "https://ruma.dev/images/logo.png")]
 //! A minimal [Matrix](https://matrix.org/) client library.
 //!
 //! # Usage
@@ -13,7 +13,7 @@
 //! // type HttpClient = ruma_client::http_client::_;
 //! # type HttpClient = ruma_client::http_client::Dummy;
 //! # let work = async {
-//! let homeserver_url = "https://example.com".parse().unwrap();
+//! let homeserver_url = "https://example.com".to_owned();
 //! let client = ruma::Client::builder()
 //!     .homeserver_url(homeserver_url)
 //!     .build::<ruma_client::http_client::Dummy>()
@@ -34,10 +34,10 @@
 //! application service that does not need to log in, but uses the access_token directly:
 //!
 //! ```no_run
-//! # type HttpClient = ruma_client::http_client::Dummy;
-//! #
+//! # #[cfg(feature = "client-api")]
 //! # async {
-//! let homeserver_url = "https://example.com".parse().unwrap();
+//! # type HttpClient = ruma_client::http_client::Dummy;
+//! let homeserver_url = "https://example.com".to_owned();
 //! let client = ruma_client::Client::builder()
 //!     .homeserver_url(homeserver_url)
 //!     .access_token(Some("as_access_token".into()))
@@ -59,21 +59,19 @@
 //! For example:
 //!
 //! ```no_run
-//! # let homeserver_url = "https://example.com".parse().unwrap();
+//! # #[cfg(feature = "client-api")]
 //! # async {
+//! # let homeserver_url = "https://example.com".to_owned();
 //! # let client = ruma_client::Client::builder()
 //! #     .homeserver_url(homeserver_url)
 //! #     .build::<ruma_client::http_client::Dummy>()
 //! #     .await?;
 //!
 //! use ruma_client_api::alias::get_alias;
-//! use ruma_common::{api::MatrixVersion, room_alias_id, room_id};
+//! use ruma_common::{api::MatrixVersion, owned_room_alias_id, room_id};
 //!
-//! let response = client
-//!     .send_request(get_alias::v3::Request::new(
-//!         room_alias_id!("#example_room:example.com").to_owned(),
-//!     ))
-//!     .await?;
+//! let alias = owned_room_alias_id!("#example_room:example.com");
+//! let response = client.send_request(get_alias::v3::Request::new(alias)).await?;
 //!
 //! assert_eq!(response.room_id, room_id!("!n8f893n9:example.com"));
 //! # Result::<(), ruma_client::Error<_, _>>::Ok(())
@@ -87,7 +85,6 @@
 //! * `hyper`
 //! * `hyper-native-tls`
 //! * `hyper-rustls`
-//! * `isahc`
 //! * `reqwest` – if you use the `reqwest` library already, activate this feature and configure the
 //!   TLS backend on `reqwest` directly. If you want to use `reqwest` but don't depend on it
 //!   already, use one of the sub-features instead. For details on the meaning of these, see

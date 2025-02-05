@@ -8,7 +8,7 @@ use crate::{OwnedRoomId, OwnedUserId};
 
 /// The kinds of push rules that are available.
 #[derive(Clone, Debug)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub enum AnyPushRule {
     /// Rules that override all other kinds.
     Override(ConditionalPushRule),
@@ -48,9 +48,29 @@ impl AnyPushRule {
         self.as_ref().actions()
     }
 
+    /// Whether an event that matches the push rule should be highlighted.
+    pub fn triggers_highlight(&self) -> bool {
+        self.as_ref().triggers_highlight()
+    }
+
+    /// Whether an event that matches the push rule should trigger a notification.
+    pub fn triggers_notification(&self) -> bool {
+        self.as_ref().triggers_notification()
+    }
+
+    /// The sound that should be played when an event matches the push rule, if any.
+    pub fn triggers_sound(&self) -> Option<&str> {
+        self.as_ref().triggers_sound()
+    }
+
     /// Get the `rule_id` of the push rule.
     pub fn rule_id(&self) -> &str {
         self.as_ref().rule_id()
+    }
+
+    /// Whether the push rule is a server-default rule.
+    pub fn is_server_default(&self) -> bool {
+        self.as_ref().is_server_default()
     }
 
     /// Check if the push rule applies to the event.
@@ -105,7 +125,7 @@ impl IntoIterator for Ruleset {
 
 /// Reference to any kind of push rule.
 #[derive(Clone, Copy, Debug)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub enum AnyPushRuleRef<'a> {
     /// Rules that override all other kinds.
     Override(&'a ConditionalPushRule),
@@ -157,6 +177,21 @@ impl<'a> AnyPushRuleRef<'a> {
         }
     }
 
+    /// Whether an event that matches the push rule should be highlighted.
+    pub fn triggers_highlight(self) -> bool {
+        self.actions().iter().any(|a| a.is_highlight())
+    }
+
+    /// Whether an event that matches the push rule should trigger a notification.
+    pub fn triggers_notification(self) -> bool {
+        self.actions().iter().any(|a| a.should_notify())
+    }
+
+    /// The sound that should be played when an event matches the push rule, if any.
+    pub fn triggers_sound(self) -> Option<&'a str> {
+        self.actions().iter().find_map(|a| a.sound())
+    }
+
     /// Get the `rule_id` of the push rule.
     pub fn rule_id(self) -> &'a str {
         match self {
@@ -168,6 +203,17 @@ impl<'a> AnyPushRuleRef<'a> {
         }
     }
 
+    /// Whether the push rule is a server-default rule.
+    pub fn is_server_default(self) -> bool {
+        match self {
+            Self::Override(rule) => rule.default,
+            Self::Underride(rule) => rule.default,
+            Self::Content(rule) => rule.default,
+            Self::Room(rule) => rule.default,
+            Self::Sender(rule) => rule.default,
+        }
+    }
+
     /// Check if the push rule applies to the event.
     ///
     /// # Arguments
@@ -175,7 +221,7 @@ impl<'a> AnyPushRuleRef<'a> {
     /// * `event` - The flattened JSON representation of a room message event.
     /// * `context` - The context of the room at the time of the event.
     pub fn applies(self, event: &FlattenedJson, context: &PushConditionRoomCtx) -> bool {
-        if event.get("sender").map_or(false, |sender| sender == context.user_id) {
+        if event.get_str("sender").is_some_and(|sender| sender == context.user_id) {
             return false;
         }
 

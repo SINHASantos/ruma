@@ -1,11 +1,11 @@
 //! Verification of digital signatures.
 
-use ed25519_dalek::{PublicKey, Verifier as _};
+use ed25519_dalek::{Verifier as _, VerifyingKey};
 
 use crate::{Error, ParseError, VerificationError};
 
 /// A digital signature verifier.
-pub trait Verifier {
+pub(crate) trait Verifier {
     /// Use a public key to verify a signature against the JSON object that was signed.
     ///
     /// # Parameters
@@ -23,7 +23,7 @@ pub trait Verifier {
 
 /// A verifier for Ed25519 digital signatures.
 #[derive(Debug, Default)]
-pub struct Ed25519Verifier;
+pub(crate) struct Ed25519Verifier;
 
 impl Verifier for Ed25519Verifier {
     fn verify_json(
@@ -32,11 +32,15 @@ impl Verifier for Ed25519Verifier {
         signature: &[u8],
         message: &[u8],
     ) -> Result<(), Error> {
-        PublicKey::from_bytes(public_key)
-            .map_err(ParseError::PublicKey)?
-            .verify(message, &signature.try_into().map_err(ParseError::Signature)?)
-            .map_err(VerificationError::Signature)
-            .map_err(Error::from)
+        VerifyingKey::from_bytes(
+            public_key
+                .try_into()
+                .map_err(|_| ParseError::PublicKey(ed25519_dalek::SignatureError::new()))?,
+        )
+        .map_err(ParseError::PublicKey)?
+        .verify(message, &signature.try_into().map_err(ParseError::Signature)?)
+        .map_err(VerificationError::Signature)
+        .map_err(Error::from)
     }
 }
 

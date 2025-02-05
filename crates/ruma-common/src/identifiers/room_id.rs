@@ -5,6 +5,7 @@ use ruma_macros::IdZst;
 use super::{
     matrix_uri::UriAction, MatrixToUri, MatrixUri, OwnedEventId, OwnedServerName, ServerName,
 };
+use crate::RoomOrAliasId;
 
 /// A Matrix [room ID].
 ///
@@ -16,7 +17,7 @@ use super::{
 /// assert_eq!(<&RoomId>::try_from("!n8f893n9:example.com").unwrap(), "!n8f893n9:example.com");
 /// ```
 ///
-/// [room ID]: https://spec.matrix.org/latest/appendices/#room-ids-and-event-ids
+/// [room ID]: https://spec.matrix.org/latest/appendices/#room-ids
 #[repr(transparent)]
 #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, IdZst)]
 #[ruma_id(validate = ruma_identifiers_validation::room_id::validate)]
@@ -24,23 +25,16 @@ pub struct RoomId(str);
 
 impl RoomId {
     /// Attempts to generate a `RoomId` for the given origin server with a localpart consisting of
-    /// 18 random ASCII characters.
-    ///
-    /// Fails if the given homeserver cannot be parsed as a valid host.
+    /// 18 random ASCII alphanumeric characters, as recommended in the spec.
     #[cfg(feature = "rand")]
     #[allow(clippy::new_ret_no_self)]
     pub fn new(server_name: &ServerName) -> OwnedRoomId {
         Self::from_borrowed(&format!("!{}:{server_name}", super::generate_localpart(18))).to_owned()
     }
 
-    /// Returns the rooms's unique ID.
-    pub fn localpart(&self) -> &str {
-        &self.as_str()[1..self.colon_idx()]
-    }
-
     /// Returns the server name of the room ID.
-    pub fn server_name(&self) -> &ServerName {
-        ServerName::from_borrowed(&self.as_str()[self.colon_idx() + 1..])
+    pub fn server_name(&self) -> Option<&ServerName> {
+        <&RoomOrAliasId>::from(self).server_name()
     }
 
     /// Create a `matrix.to` URI for this room ID.
@@ -202,40 +196,30 @@ impl RoomId {
             None,
         )
     }
-
-    fn colon_idx(&self) -> usize {
-        self.as_str().find(':').unwrap()
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{OwnedRoomId, RoomId};
-    use crate::IdParseError;
+    use crate::{server_name, IdParseError};
 
     #[test]
     fn valid_room_id() {
-        assert_eq!(
-            <&RoomId>::try_from("!29fhd83h92h0:example.com")
-                .expect("Failed to create RoomId.")
-                .as_ref(),
-            "!29fhd83h92h0:example.com"
-        );
+        let room_id =
+            <&RoomId>::try_from("!29fhd83h92h0:example.com").expect("Failed to create RoomId.");
+        assert_eq!(room_id, "!29fhd83h92h0:example.com");
     }
 
     #[test]
     fn empty_localpart() {
-        assert_eq!(
-            <&RoomId>::try_from("!:example.com").expect("Failed to create RoomId.").as_ref(),
-            "!:example.com"
-        );
+        let room_id = <&RoomId>::try_from("!:example.com").expect("Failed to create RoomId.");
+        assert_eq!(room_id, "!:example.com");
+        assert_eq!(room_id.server_name(), Some(server_name!("example.com")));
     }
 
     #[cfg(feature = "rand")]
     #[test]
     fn generate_random_valid_room_id() {
-        use crate::server_name;
-
         let room_id = RoomId::new(server_name!("example.com"));
         let id_str = room_id.as_str();
 
@@ -265,20 +249,17 @@ mod tests {
 
     #[test]
     fn valid_room_id_with_explicit_standard_port() {
-        assert_eq!(
-            <&RoomId>::try_from("!29fhd83h92h0:example.com:443")
-                .expect("Failed to create RoomId.")
-                .as_ref(),
-            "!29fhd83h92h0:example.com:443"
-        );
+        let room_id =
+            <&RoomId>::try_from("!29fhd83h92h0:example.com:443").expect("Failed to create RoomId.");
+        assert_eq!(room_id, "!29fhd83h92h0:example.com:443");
+        assert_eq!(room_id.server_name(), Some(server_name!("example.com:443")));
     }
 
     #[test]
     fn valid_room_id_with_non_standard_port() {
         assert_eq!(
             <&RoomId>::try_from("!29fhd83h92h0:example.com:5000")
-                .expect("Failed to create RoomId.")
-                .as_ref(),
+                .expect("Failed to create RoomId."),
             "!29fhd83h92h0:example.com:5000"
         );
     }
@@ -292,23 +273,24 @@ mod tests {
     }
 
     #[test]
-    fn missing_room_id_delimiter() {
-        assert_eq!(<&RoomId>::try_from("!29fhd83h92h0").unwrap_err(), IdParseError::MissingColon);
+    fn missing_server_name() {
+        let room_id = <&RoomId>::try_from("!29fhd83h92h0").expect("Failed to create RoomId.");
+        assert_eq!(room_id, "!29fhd83h92h0");
+        assert_eq!(room_id.server_name(), None);
     }
 
     #[test]
     fn invalid_room_id_host() {
-        assert_eq!(
-            <&RoomId>::try_from("!29fhd83h92h0:/").unwrap_err(),
-            IdParseError::InvalidServerName
-        );
+        let room_id = <&RoomId>::try_from("!29fhd83h92h0:/").expect("Failed to create RoomId.");
+        assert_eq!(room_id, "!29fhd83h92h0:/");
+        assert_eq!(room_id.server_name(), None);
     }
 
     #[test]
     fn invalid_room_id_port() {
-        assert_eq!(
-            <&RoomId>::try_from("!29fhd83h92h0:example.com:notaport").unwrap_err(),
-            IdParseError::InvalidServerName
-        );
+        let room_id = <&RoomId>::try_from("!29fhd83h92h0:example.com:notaport")
+            .expect("Failed to create RoomId.");
+        assert_eq!(room_id, "!29fhd83h92h0:example.com:notaport");
+        assert_eq!(room_id.server_name(), None);
     }
 }

@@ -1,5 +1,5 @@
-#![doc(html_favicon_url = "https://www.ruma.io/favicon.ico")]
-#![doc(html_logo_url = "https://www.ruma.io/images/logo.png")]
+#![doc(html_favicon_url = "https://ruma.dev/favicon.ico")]
+#![doc(html_logo_url = "https://ruma.dev/images/logo.png")]
 //! Common types for the Ruma crates.
 
 #![recursion_limit = "1024"]
@@ -24,15 +24,16 @@ pub mod authentication;
 pub mod canonical_json;
 pub mod directory;
 pub mod encryption;
-#[cfg(feature = "events")]
-pub mod events;
+pub mod http_headers;
 mod identifiers;
+pub mod media;
 mod percent_encode;
 pub mod power_levels;
 pub mod presence;
 pub mod push;
 pub mod room;
 pub mod serde;
+pub mod space;
 pub mod thirdparty;
 mod time;
 pub mod to_device;

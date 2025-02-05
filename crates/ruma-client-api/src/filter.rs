@@ -10,9 +10,8 @@ use js_int::UInt;
 use ruma_common::{serde::StringEnum, OwnedRoomId, OwnedUserId};
 use serde::{Deserialize, Serialize};
 
-use crate::PrivOwnedStr;
-
 pub use self::{lazy_load::LazyLoadOptions, url::UrlFilter};
+use crate::PrivOwnedStr;
 
 /// Format to use for returned events.
 #[doc = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/doc/string_enum.md"))]
@@ -33,7 +32,7 @@ pub enum EventFormat {
 
 /// Filters to be applied to room events.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct RoomEventFilter {
     /// A list of event types to exclude.
     ///
@@ -117,6 +116,18 @@ impl RoomEventFilter {
         Self { types: Some(vec![]), ..Default::default() }
     }
 
+    /// Creates a new `RoomEventFilter` with [room member lazy-loading] enabled.
+    ///
+    /// Redundant membership events are disabled.
+    ///
+    /// [room member lazy-loading]: https://spec.matrix.org/latest/client-server-api/#lazy-loading-room-members
+    pub fn with_lazy_loading() -> Self {
+        Self {
+            lazy_load_options: LazyLoadOptions::Enabled { include_redundant_members: false },
+            ..Default::default()
+        }
+    }
+
     /// Returns `true` if all fields are empty.
     pub fn is_empty(&self) -> bool {
         self.not_types.is_empty()
@@ -134,7 +145,7 @@ impl RoomEventFilter {
 
 /// Filters to be applied to room data.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct RoomFilter {
     /// Include rooms that the user has left in the sync.
     ///
@@ -188,6 +199,15 @@ impl RoomFilter {
         Self { rooms: Some(vec![]), ..Default::default() }
     }
 
+    /// Creates a new `RoomFilter` with [room member lazy-loading] enabled.
+    ///
+    /// Redundant membership events are disabled.
+    ///
+    /// [room member lazy-loading]: https://spec.matrix.org/latest/client-server-api/#lazy-loading-room-members
+    pub fn with_lazy_loading() -> Self {
+        Self { state: RoomEventFilter::with_lazy_loading(), ..Default::default() }
+    }
+
     /// Returns `true` if all fields are empty.
     pub fn is_empty(&self) -> bool {
         !self.include_leave
@@ -202,7 +222,7 @@ impl RoomFilter {
 
 /// Filter for non-room data.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct Filter {
     /// A list of event types to exclude.
     ///
@@ -262,14 +282,14 @@ impl Filter {
 
 /// A filter definition
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct FilterDefinition {
     /// List of event fields to include.
     ///
     /// If this list is absent then all fields are included. The entries may include '.' characters
     /// to indicate sub-fields. So ['content.body'] will include the 'body' field of the 'content'
-    /// object. A literal '.' character in a field name may be escaped using a '\'. A server may
-    /// include more fields than were requested.
+    /// object. A literal '.' or '\' character in a field name may be escaped using a '\'. A server
+    /// may include more fields than were requested.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub event_fields: Option<Vec<String>>,
 
@@ -311,6 +331,15 @@ impl FilterDefinition {
         }
     }
 
+    /// Creates a new `FilterDefinition` with [room member lazy-loading] enabled.
+    ///
+    /// Redundant membership events are disabled.
+    ///
+    /// [room member lazy-loading]: https://spec.matrix.org/latest/client-server-api/#lazy-loading-room-members
+    pub fn with_lazy_loading() -> Self {
+        Self { room: RoomFilter::with_lazy_loading(), ..Default::default() }
+    }
+
     /// Returns `true` if all fields are empty.
     pub fn is_empty(&self) -> bool {
         self.event_fields.is_none()
@@ -338,7 +367,6 @@ can_be_empty!(RoomFilter);
 
 #[cfg(test)]
 mod tests {
-    use assert_matches::assert_matches;
     use serde_json::{from_value as from_json_value, json, to_value as to_json_value};
 
     use super::{
@@ -391,7 +419,7 @@ mod tests {
             "contains_url": true,
         });
 
-        let filter: RoomEventFilter = assert_matches!(from_json_value(obj), Ok(f) => f);
+        let filter: RoomEventFilter = from_json_value(obj).unwrap();
 
         assert_eq!(filter.types, Some(vec!["m.room.message".to_owned()]));
         assert_eq!(filter.not_types, vec![""; 0]);

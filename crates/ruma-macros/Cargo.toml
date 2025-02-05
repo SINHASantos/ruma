@@ -1,28 +1,34 @@
 [package]
 categories = ["api-bindings", "web-programming"]
 description = "Procedural macros used by the Ruma crates."
-homepage = "https://www.ruma.io/"
+homepage = "https://ruma.dev/"
 keywords = ["matrix", "chat", "messaging", "ruma"]
 license = "MIT"
 name = "ruma-macros"
 readme = "README.md"
 repository = "https://github.com/ruma/ruma"
-version = "0.11.3"
+version = "0.15.1"
 edition = "2021"
-rust-version = "1.64"
+rust-version = { workspace = true }
 
 [lib]
 proc-macro = true
 
 [features]
-compat = []
+# Make the request and response macros expand internal derives they would
+# usually emit in the `#[derive()]` list directly, such that Rust Analyzer's
+# expand macro helper can render their output. Requires a nightly toolchain.
+__internal_macro_expand = ["syn/visit-mut"]
 
 [dependencies]
-once_cell = "1.13.0"
-proc-macro-crate = "1.0.0"
+cfg-if = "1.0.0"
+proc-macro-crate = "3.1.0"
 proc-macro2 = "1.0.24"
 quote = "1.0.8"
 ruma-identifiers-validation = { workspace = true }
 serde = { workspace = true }
-syn = { version = "1.0.57", features = ["extra-traits", "full", "visit"] }
-toml = { version = "0.7.1", default-features = false, features = ["parse"] }
+syn = { version = "2.0.2", features = ["extra-traits", "full", "visit"] }
+toml = { version = "0.8.2", default-features = false, features = ["parse"] }
+
+[lints]
+workspace = true

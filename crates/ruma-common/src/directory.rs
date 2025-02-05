@@ -15,12 +15,12 @@ use crate::{
 /// To create an instance of this type, first create a `PublicRoomsChunkInit` and convert it via
 /// `PublicRoomsChunk::from` / `.into()`.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct PublicRoomsChunk {
     /// The canonical alias of the room, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(
-        feature = "compat",
+        feature = "compat-empty-string-null",
         serde(default, deserialize_with = "crate::serde::empty_string_as_none")
     )]
     pub canonical_alias: Option<OwnedRoomAliasId>,
@@ -49,11 +49,11 @@ pub struct PublicRoomsChunk {
 
     /// The URL for the room's avatar, if one is set.
     ///
-    /// If you activate the `compat` feature, this field being an empty string in JSON will result
-    /// in `None` here during deserialization.
+    /// If you activate the `compat-empty-string-null` feature, this field being an empty string in
+    /// JSON will result in `None` here during deserialization.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(
-        feature = "compat",
+        feature = "compat-empty-string-null",
         serde(default, deserialize_with = "crate::serde::empty_string_as_none")
     )]
     pub avatar_url: Option<OwnedMxcUri>,
@@ -111,7 +111,7 @@ impl From<PublicRoomsChunkInit> for PublicRoomsChunk {
 
 /// A filter for public rooms lists.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub struct Filter {
     /// A string to search for in the room metadata, e.g. name, topic, canonical alias etc.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -120,8 +120,11 @@ pub struct Filter {
     /// The room types to include in the results.
     ///
     /// Includes all room types if it is empty.
+    ///
+    /// If the `compat-null` feature is enabled, a `null` value is allowed in deserialization, and
+    /// treated the same way as an empty list.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[cfg_attr(feature = "compat", serde(deserialize_with = "crate::serde::none_as_default"))]
+    #[cfg_attr(feature = "compat-null", serde(deserialize_with = "crate::serde::none_as_default"))]
     pub room_types: Vec<RoomTypeFilter>,
 }
 
@@ -140,7 +143,7 @@ impl Filter {
 /// Information about which networks/protocols from application services on the
 /// homeserver from which to request rooms.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub enum RoomNetwork {
     /// Return rooms from the Matrix network.
     #[default]
@@ -157,7 +160,7 @@ pub enum RoomNetwork {
 #[doc = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/doc/string_enum.md"))]
 #[derive(Clone, Default, PartialEq, Eq, StringEnum)]
 #[ruma_enum(rename_all = "snake_case")]
-#[cfg_attr(not(feature = "unstable-exhaustive-types"), non_exhaustive)]
+#[cfg_attr(not(ruma_unstable_exhaustive_types), non_exhaustive)]
 pub enum PublicRoomJoinRule {
     /// Users can request an invite to the room.
     Knock,
@@ -220,12 +223,32 @@ where
     }
 }
 
+impl From<Option<RoomType>> for RoomTypeFilter {
+    fn from(t: Option<RoomType>) -> Self {
+        match t {
+            None => Self::Default,
+            Some(s) => match s {
+                RoomType::Space => Self::Space,
+                _ => Self::from(Some(s.as_str())),
+            },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use assert_matches::assert_matches;
+    use assert_matches2::assert_matches;
     use serde_json::{from_value as from_json_value, json, to_value as to_json_value};
 
     use super::{Filter, RoomNetwork, RoomTypeFilter};
+    use crate::room::RoomType;
+
+    #[test]
+    fn test_from_room_type() {
+        let test = RoomType::Space;
+        let other: RoomTypeFilter = RoomTypeFilter::from(Some(test));
+        assert_eq!(other, RoomTypeFilter::Space);
+    }
 
     #[test]
     fn serialize_matrix_network_only() {
@@ -323,7 +346,7 @@ mod tests {
         assert_eq!(filter.room_types.len(), 3);
         assert_eq!(filter.room_types[0], RoomTypeFilter::Default);
         assert_eq!(filter.room_types[1], RoomTypeFilter::Space);
-        assert_matches!(filter.room_types[2], RoomTypeFilter::_Custom(_));
+        assert_matches!(&filter.room_types[2], RoomTypeFilter::_Custom(_));
         assert_eq!(filter.room_types[2].as_str(), Some("custom_type"));
     }
 }
